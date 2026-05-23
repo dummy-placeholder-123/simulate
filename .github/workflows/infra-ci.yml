@@ -1,0 +1,48 @@
+name: Infra CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "QCA/infra/**"
+      - ".github/workflows/infra-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  INFRA_WORKING_DIRECTORY: QCA/infra
+
+jobs:
+  build:
+    name: Build, Test, and Synth Infra
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Test
+        working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
+        run: mvn -B test
+
+      - name: CDK synth
+        working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
+        run: cdk synth
