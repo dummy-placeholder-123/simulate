@@ -9,6 +9,7 @@ permissions:
 
 env:
   INFRA_WORKING_DIRECTORY: QCA/infra
+  AWS_ACCOUNT_ID: "564061926474"
   AWS_REGION: us-east-1
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
 
@@ -49,3 +50,11 @@ jobs:
       - name: CDK synth
         working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
         run: cdk synth
+
+      - name: CDK bootstrap
+        working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
+        run: cdk deploy --require-approval never
