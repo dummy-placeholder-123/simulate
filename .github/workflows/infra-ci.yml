@@ -1,12 +1,6 @@
 name: Infra CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "QCA/infra/**"
-      - ".github/workflows/infra-ci.yml"
   workflow_dispatch:
 
 permissions:

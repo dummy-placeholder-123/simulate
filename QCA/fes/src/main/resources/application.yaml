@@ -1,3 +1,10 @@
 spring:
   application:
     name: fes
+
+qca:
+  dynamodb:
+    scan-table-name: qca-scans
+    idempotency-table-name: qca-scan-idempotency
+  idempotency:
+    ttl-hours: 24

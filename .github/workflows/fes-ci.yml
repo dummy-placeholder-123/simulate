@@ -1,12 +1,6 @@
 name: FES CI
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "QCA/fes/**"
-      - ".github/workflows/fes-ci.yml"
   workflow_dispatch:
 
 permissions:

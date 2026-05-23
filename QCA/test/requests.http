@@ -1,0 +1,15 @@
+@baseUrl = http://localhost:8080
+
+### Start GitHub PR scan
+POST {{baseUrl}}/api/start-scan
+Content-Type: application/json
+
+{
+  "scanId": "scan-local-001",
+  "accountId": "564061926474",
+  "repoFullName": "devashishrane/qca",
+  "prNumber": 42,
+  "headSha": "abc123def4567890",
+  "useCase": "github-pr-scan",
+  "service": "fes"
+}
