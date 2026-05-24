@@ -30,6 +30,7 @@ import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
 import software.amazon.awscdk.services.ecr.LifecycleRule;
 import software.amazon.awscdk.services.ecr.Repository;
+import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.logs.LogGroup;
@@ -154,7 +155,7 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
-        Repository engineRepository = Repository.Builder.create(this, "EngineRepository")
+        Repository.Builder.create(this, "EngineRepository")
                 .repositoryName("qca-engine")
                 .imageScanOnPush(true)
                 .lifecycleRules(List.of(LifecycleRule.builder()
@@ -165,6 +166,8 @@ public class InfraStack extends Stack {
 
         Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
+                        "service-role/AmazonECSTaskExecutionRolePolicy")))
                 .build();
 
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
@@ -181,7 +184,6 @@ public class InfraStack extends Stack {
         scanQueue.grantConsumeMessages(engineTaskDefinition.getTaskRole());
         scanUploadBucket.grantRead(engineTaskDefinition.getTaskRole());
         scanTable.grantWriteData(engineTaskDefinition.getTaskRole());
-        engineRepository.grantPull(engineExecutionRole);
 
         engineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
                 .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
