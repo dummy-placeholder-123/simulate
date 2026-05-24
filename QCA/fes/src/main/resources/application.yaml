@@ -3,8 +3,15 @@ spring:
     name: fes
 
 qca:
+  aws:
+    region: ${AWS_REGION:us-east-1}
   dynamodb:
     scan-table-name: qca-scans
     idempotency-table-name: qca-scan-idempotency
+  s3:
+    scan-upload-bucket-name: qca-scan-uploads-564061926474-us-east-1
+    presigned-url-duration-minutes: 5
+  step-functions:
+    scan-state-machine-arn: arn:aws:states:${qca.aws.region}:564061926474:stateMachine:qca-scan-state-machine
   idempotency:
     ttl-hours: 24

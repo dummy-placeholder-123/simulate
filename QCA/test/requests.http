@@ -1,7 +1,9 @@
 @baseUrl = http://localhost:8080
+@uploadUrl = paste-presigned-upload-url-here
+@uploadFile = ./amazon-q-detectors-main.zip
 
-### Start GitHub PR scan
-POST {{baseUrl}}/api/start-scan
+### Create GitHub PR scan
+POST {{baseUrl}}/api/create-scan
 Content-Type: application/json
 
 {
@@ -13,3 +15,20 @@ Content-Type: application/json
   "useCase": "github-pr-scan",
   "service": "fes"
 }
+
+### Upload scan input to presigned URL
+PUT {{uploadUrl}}
+Content-Type: application/octet-stream
+
+< {{uploadFile}}
+
+### Start scan processing
+POST {{baseUrl}}/api/start-scan
+Content-Type: application/json
+
+{
+  "scanId": "scan-local-001"
+}
+
+### List scans by account
+GET {{baseUrl}}/api/accounts/564061926474/scans?limit=50

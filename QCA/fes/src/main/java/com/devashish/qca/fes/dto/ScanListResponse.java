@@ -1,6 +1,6 @@
 package com.devashish.qca.fes.dto;
 
-public record ScanResponse(
+public record ScanListResponse(
         String scanId,
         String accountId,
         String repoFullName,
@@ -9,9 +9,6 @@ public record ScanResponse(
         String useCase,
         String service,
         String status,
-        String createdAt,
-        String uploadUrl,
-        String uploadObjectKey,
-        String uploadUrlExpiresAt
+        String createdAt
 ) {
 }
