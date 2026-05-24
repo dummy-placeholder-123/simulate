@@ -1,4 +1,4 @@
-name: FES CI
+name: FES Deploy
 
 on:
   workflow_dispatch:
@@ -10,9 +10,10 @@ env:
   FES_WORKING_DIRECTORY: QCA/fes
 
 jobs:
-  build:
-    name: Build and Test FES
+  deploy:
+    name: Build FES
     runs-on: ubuntu-latest
+    environment: prod
 
     steps:
       - name: Checkout

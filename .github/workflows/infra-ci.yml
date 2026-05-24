@@ -1,4 +1,4 @@
-name: Infra CI
+name: Infra Deploy
 
 on:
   workflow_dispatch:
@@ -14,9 +14,10 @@ env:
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
 
 jobs:
-  build:
-    name: Build, Test, and Synth Infra
+  deploy:
+    name: Deploy Infra
     runs-on: ubuntu-latest
+    environment: prod
 
     steps:
       - name: Checkout
