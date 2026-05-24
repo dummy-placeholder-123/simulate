@@ -30,6 +30,8 @@ import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
 import software.amazon.awscdk.services.ecr.LifecycleRule;
 import software.amazon.awscdk.services.ecr.Repository;
+import software.amazon.awscdk.services.iam.Role;
+import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.s3.BlockPublicAccess;
@@ -161,10 +163,15 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.RETAIN)
                 .build();
 
+        Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
+                .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
+                .build();
+
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
                 .family("qca-engine")
                 .cpu(256)
                 .memoryLimitMiB(512)
+                .executionRole(engineExecutionRole)
                 .runtimePlatform(RuntimePlatform.builder()
                         .cpuArchitecture(CpuArchitecture.X86_64)
                         .operatingSystemFamily(OperatingSystemFamily.LINUX)
@@ -174,9 +181,10 @@ public class InfraStack extends Stack {
         scanQueue.grantConsumeMessages(engineTaskDefinition.getTaskRole());
         scanUploadBucket.grantRead(engineTaskDefinition.getTaskRole());
         scanTable.grantWriteData(engineTaskDefinition.getTaskRole());
+        engineRepository.grantPull(engineExecutionRole);
 
         engineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
-                .image(ContainerImage.fromEcrRepository(engineRepository, "prod"))
+                .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
                 .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
                         .logGroup(engineLogGroup)
                         .streamPrefix("engine")
