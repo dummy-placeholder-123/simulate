@@ -19,6 +19,8 @@ env:
   ECR_REPOSITORY: qca-engine
   ECS_CLUSTER: qca-worker-cluster
   ECS_SERVICE: qca-engine-service
+  ECS_TASK_DEFINITION: qca-engine
+  ECS_CONTAINER_NAME: EngineContainer
 
 jobs:
   deploy:
@@ -65,13 +67,43 @@ jobs:
             .
           docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
           docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:prod
+          echo "IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> ${GITHUB_ENV}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${ECS_TASK_DEFINITION} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render task definition
+        id: render-task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+          image: ${{ env.IMAGE_URI }}
 
       - name: Deploy ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Enable prod workers
         run: |
+          aws application-autoscaling register-scalable-target \
+            --service-namespace ecs \
+            --resource-id service/${ECS_CLUSTER}/${ECS_SERVICE} \
+            --scalable-dimension ecs:service:DesiredCount \
+            --min-capacity 1 \
+            --max-capacity 5
           aws ecs update-service \
             --cluster ${ECS_CLUSTER} \
             --service ${ECS_SERVICE} \
-            --force-new-deployment
+            --desired-count 1
           aws ecs wait services-stable \
             --cluster ${ECS_CLUSTER} \
             --services ${ECS_SERVICE}

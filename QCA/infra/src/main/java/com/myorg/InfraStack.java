@@ -16,21 +16,18 @@ import software.amazon.awscdk.services.dynamodb.BillingMode;
 import software.amazon.awscdk.services.dynamodb.GlobalSecondaryIndexProps;
 import software.amazon.awscdk.services.dynamodb.ProjectionType;
 import software.amazon.awscdk.services.dynamodb.Table;
-import software.amazon.awscdk.services.ecs.AssetImageProps;
 import software.amazon.awscdk.services.ecs.AwsLogDriverProps;
 import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.ecs.ContainerImage;
+import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
+import software.amazon.awscdk.services.ecs.CpuArchitecture;
 import software.amazon.awscdk.services.ecs.DeploymentCircuitBreaker;
 import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.ecs.FargateTaskDefinition;
 import software.amazon.awscdk.services.ecs.LogDriver;
-import software.amazon.awscdk.services.ecs.ScalableTaskCount;
-import software.amazon.awscdk.services.ecs.Secret;
-import software.amazon.awscdk.services.ecs.TaskDefinition;
-import software.amazon.awscdk.services.ecs.CpuArchitecture;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
 import software.amazon.awscdk.services.ecs.RuntimePlatform;
-import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
+import software.amazon.awscdk.services.ecs.ScalableTaskCount;
 import software.amazon.awscdk.services.ecr.LifecycleRule;
 import software.amazon.awscdk.services.ecr.Repository;
 import software.amazon.awscdk.services.logs.LogGroup;
@@ -195,7 +192,7 @@ public class InfraStack extends Stack {
                 .serviceName("qca-engine-service")
                 .cluster(cluster)
                 .taskDefinition(engineTaskDefinition)
-                .desiredCount(1)
+                .desiredCount(0)
                 .assignPublicIp(true)
                 .circuitBreaker(DeploymentCircuitBreaker.builder()
                         .rollback(true)
@@ -207,7 +204,7 @@ public class InfraStack extends Stack {
                 .build();
 
         ScalableTaskCount scaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()
-                .minCapacity(1)
+                .minCapacity(0)
                 .maxCapacity(5)
                 .build());
 
