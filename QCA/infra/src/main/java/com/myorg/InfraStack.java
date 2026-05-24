@@ -31,8 +31,8 @@ import software.amazon.awscdk.services.ecs.CpuArchitecture;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
 import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
-import software.amazon.awscdk.services.iam.Effect;
-import software.amazon.awscdk.services.iam.PolicyStatement;
+import software.amazon.awscdk.services.ecr.LifecycleRule;
+import software.amazon.awscdk.services.ecr.Repository;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.s3.BlockPublicAccess;
@@ -155,6 +155,15 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        Repository engineRepository = Repository.Builder.create(this, "EngineRepository")
+                .repositoryName("qca-engine")
+                .imageScanOnPush(true)
+                .lifecycleRules(List.of(LifecycleRule.builder()
+                        .maxImageCount(20)
+                        .build()))
+                .removalPolicy(RemovalPolicy.RETAIN)
+                .build();
+
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
                 .family("qca-engine")
                 .cpu(256)
@@ -170,7 +179,7 @@ public class InfraStack extends Stack {
         scanTable.grantWriteData(engineTaskDefinition.getTaskRole());
 
         engineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
-                .image(ContainerImage.fromAsset("../engine", AssetImageProps.builder().build()))
+                .image(ContainerImage.fromEcrRepository(engineRepository, "prod"))
                 .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
                         .logGroup(engineLogGroup)
                         .streamPrefix("engine")
