@@ -28,8 +28,7 @@ import software.amazon.awscdk.services.ecs.LogDriver;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
 import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
-import software.amazon.awscdk.services.ecr.LifecycleRule;
-import software.amazon.awscdk.services.ecr.Repository;
+import software.amazon.awscdk.services.ecr.CfnRepository;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
@@ -155,14 +154,32 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
-        Repository.Builder.create(this, "EngineRepository")
+        CfnRepository engineRepository = CfnRepository.Builder.create(this, "EngineRepository")
                 .repositoryName("qca-engine")
-                .imageScanOnPush(true)
-                .lifecycleRules(List.of(LifecycleRule.builder()
-                        .maxImageCount(20)
-                        .build()))
-                .removalPolicy(RemovalPolicy.RETAIN)
+                .imageScanningConfiguration(CfnRepository.ImageScanningConfigurationProperty.builder()
+                        .scanOnPush(true)
+                        .build())
+                .lifecyclePolicy(CfnRepository.LifecyclePolicyProperty.builder()
+                        .lifecyclePolicyText("""
+                                {
+                                  "rules": [
+                                    {
+                                      "rulePriority": 1,
+                                      "selection": {
+                                        "tagStatus": "any",
+                                        "countType": "imageCountMoreThan",
+                                        "countNumber": 20
+                                      },
+                                      "action": {
+                                        "type": "expire"
+                                      }
+                                    }
+                                  ]
+                                }
+                                """)
+                        .build())
                 .build();
+        engineRepository.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
         Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))

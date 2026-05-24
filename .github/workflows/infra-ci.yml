@@ -52,6 +52,34 @@ jobs:
         working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
         run: cdk synth
 
+      - name: Validate engine bootstrap template
+        working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          template_path = Path("cdk.out/InfraStack.template.json")
+          template = json.loads(template_path.read_text())
+          resources = template.get("Resources", {})
+
+          for logical_id, resource in resources.items():
+              if resource.get("Type") != "AWS::ECS::TaskDefinition":
+                  continue
+
+              rendered = json.dumps(resource)
+              if "EngineRepository" in rendered:
+                  print(f"::error::{logical_id} must not reference EngineRepository during infra deploy")
+                  sys.exit(1)
+
+              containers = resource.get("Properties", {}).get("ContainerDefinitions", [])
+              images = [container.get("Image") for container in containers]
+              if "public.ecr.aws/amazonlinux/amazonlinux:latest" not in images:
+                  print(f"::error::{logical_id} must use the public bootstrap image in infra deploy")
+                  sys.exit(1)
+          PY
+
       - name: CDK bootstrap
         working-directory: ${{ env.INFRA_WORKING_DIRECTORY }}
         run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
