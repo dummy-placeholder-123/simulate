@@ -28,6 +28,7 @@ import software.amazon.awscdk.services.ecs.LogDriver;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
 import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
+import software.amazon.awscdk.services.ecr.CfnRepository;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
@@ -152,6 +153,33 @@ public class InfraStack extends Stack {
                 .retention(RetentionDays.ONE_WEEK)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
+
+        CfnRepository engineRepository = CfnRepository.Builder.create(this, "EngineImageRepository")
+                .repositoryName("qca-engine")
+                .imageScanningConfiguration(CfnRepository.ImageScanningConfigurationProperty.builder()
+                        .scanOnPush(true)
+                        .build())
+                .lifecyclePolicy(CfnRepository.LifecyclePolicyProperty.builder()
+                        .lifecyclePolicyText("""
+                                {
+                                  "rules": [
+                                    {
+                                      "rulePriority": 1,
+                                      "selection": {
+                                        "tagStatus": "any",
+                                        "countType": "imageCountMoreThan",
+                                        "countNumber": 20
+                                      },
+                                      "action": {
+                                        "type": "expire"
+                                      }
+                                    }
+                                  ]
+                                }
+                                """)
+                        .build())
+                .build();
+        engineRepository.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
         Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
