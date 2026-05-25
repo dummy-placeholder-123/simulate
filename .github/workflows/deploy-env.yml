@@ -68,6 +68,13 @@ jobs:
           echo "ENGINE_TASK_FAMILY=${PREFIX}-engine" >> ${GITHUB_ENV}
           echo "ENGINE_CONTAINER=EngineContainer" >> ${GITHUB_ENV}
 
+      - name: Set engine service desired count to 1
+        run: |
+          aws ecs update-service \
+            --cluster ${ENGINE_CLUSTER} \
+            --service ${ENGINE_SERVICE} \
+            --desired-count 1
+
       - name: Update worker-service ECS task definition
         run: |
           aws ecs describe-task-definition \
