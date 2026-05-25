@@ -74,7 +74,7 @@ public class InfraStack extends Stack {
                         .type(AttributeType.STRING)
                         .build())
                 .billingMode(BillingMode.PAY_PER_REQUEST)
-                .removalPolicy(RemovalPolicy.RETAIN)
+                .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
         scanTable.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
@@ -98,7 +98,7 @@ public class InfraStack extends Stack {
                         .build())
                 .timeToLiveAttribute("expiresAt")
                 .billingMode(BillingMode.PAY_PER_REQUEST)
-                .removalPolicy(RemovalPolicy.RETAIN)
+                .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
         Bucket scanUploadBucket = Bucket.Builder.create(this, "ScanUploadBucket")
@@ -111,19 +111,20 @@ public class InfraStack extends Stack {
                         .build()))
                 .encryption(BucketEncryption.S3_MANAGED)
                 .enforceSsl(true)
-                .versioned(true)
-                .removalPolicy(RemovalPolicy.RETAIN)
+                .versioned(false)
+                .autoDeleteObjects(true)
+                .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
         Queue scanDlq = Queue.Builder.create(this, "ScanDeadLetterQueue")
                 .queueName(resourcePrefix + "-scan-dlq")
-                .retentionPeriod(Duration.days(14))
+                .retentionPeriod(Duration.days(1))
                 .build();
 
         Queue scanQueue = Queue.Builder.create(this, "ScanQueue")
                 .queueName(scanQueueName)
                 .visibilityTimeout(Duration.minutes(6))
-                .retentionPeriod(Duration.days(4))
+                .retentionPeriod(Duration.days(1))
                 .deadLetterQueue(DeadLetterQueue.builder()
                         .queue(scanDlq)
                         .maxReceiveCount(3)
@@ -176,7 +177,7 @@ public class InfraStack extends Stack {
 
         LogGroup engineLogGroup = LogGroup.Builder.create(this, "EngineLogGroup")
                 .logGroupName(engineLogGroupName)
-                .retention(RetentionDays.ONE_WEEK)
+                .retention(RetentionDays.ONE_DAY)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
@@ -205,7 +206,7 @@ public class InfraStack extends Stack {
                                 """)
                         .build())
                 .build();
-        engineRepository.applyRemovalPolicy(RemovalPolicy.RETAIN);
+        engineRepository.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
         Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))

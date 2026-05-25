@@ -50,6 +50,13 @@ jobs:
         with:
           role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Bootstrap CDK if needed
+        run: |
+          if aws ssm get-parameter --name /cdk-bootstrap/hnb659fds/version >/dev/null 2>&1; then
+            echo "CDK bootstrap already present"
+          else
+            cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_REGION} --require-approval never
+          fi
       - name: Test
         run: mvn -B test
       - name: Deploy
