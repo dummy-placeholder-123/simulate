@@ -1,0 +1,9 @@
+environment: qa
+
+services:
+  generic-service:
+    image: qca-fes
+    tag: replace-with-commit-sha
+  worker-service:
+    image: qca-engine
+    tag: replace-with-commit-sha

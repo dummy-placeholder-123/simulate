@@ -3,14 +3,14 @@ package com.myorg;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.StackProps;
 
-public class EngineInfraApp {
+public class InfraApp {
     public static void main(final String[] args) {
         App app = new App();
 
         String stage = StageConfig.stage(app.getNode().tryGetContext("stage"));
-        String stackId = "prod".equals(stage) ? "EngineInfraStack" : "EngineInfraStack-" + stage;
+        String stackId = "prod".equals(stage) ? "InfraStack" : "InfraStack-" + stage;
 
-        new EngineInfraStack(app, stackId, StackProps.builder().build());
+        new InfraStack(app, stackId, StackProps.builder().build());
 
         app.synth();
     }

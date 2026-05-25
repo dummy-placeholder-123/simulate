@@ -14,8 +14,8 @@ public final class StageConfig {
         if (stage.isBlank()) {
             stage = "prod";
         }
-        if (!List.of("dev", "gamma", "prod").contains(stage)) {
-            throw new IllegalArgumentException("stage must be one of: dev, gamma, prod");
+        if (!List.of("dev", "qa", "prod").contains(stage)) {
+            throw new IllegalArgumentException("stage must be one of: dev, qa, prod");
         }
         return stage;
     }

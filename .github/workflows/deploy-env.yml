@@ -1,0 +1,103 @@
+name: Deploy Environment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "environments/*.yml"
+      - ".github/workflows/deploy-env.yml"
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Environment file to deploy
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+
+jobs:
+  deploy:
+    name: Deploy From Manifest
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'prod' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine stage
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "DEPLOY_STAGE=${{ inputs.stage }}" >> ${GITHUB_ENV}
+          else
+            # default for manifest push; if multiple files changed this keeps deterministic behavior
+            echo "DEPLOY_STAGE=prod" >> ${GITHUB_ENV}
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read manifest
+        run: |
+          python3 - <<'PY'
+          import os
+          import yaml
+          stage = os.environ["DEPLOY_STAGE"]
+          path = f"environments/{stage}.yml"
+          with open(path, "r", encoding="utf-8") as f:
+              doc = yaml.safe_load(f)
+          gs = doc["services"]["generic-service"]
+          ws = doc["services"]["worker-service"]
+          print(f"GENERIC_IMAGE={gs['image']}:{gs['tag']}")
+          print(f"WORKER_IMAGE={ws['image']}:{ws['tag']}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
+              out.write(f"GENERIC_IMAGE={gs['image']}:{gs['tag']}\n")
+              out.write(f"WORKER_IMAGE={ws['image']}:{ws['tag']}\n")
+          PY
+
+      - name: Resolve ECS names
+        run: |
+          if [ "${DEPLOY_STAGE}" = "prod" ]; then
+            PREFIX="qca"
+          else
+            PREFIX="qca-${DEPLOY_STAGE}"
+          fi
+          echo "ENGINE_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
+          echo "ENGINE_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
+          echo "ENGINE_TASK_FAMILY=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ENGINE_CONTAINER=EngineContainer" >> ${GITHUB_ENV}
+
+      - name: Update worker-service ECS task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${ENGINE_TASK_FAMILY} \
+            --query taskDefinition > engine-taskdef.json
+
+      - name: Render worker-service task definition
+        id: render-engine
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: engine-taskdef.json
+          container-name: ${{ env.ENGINE_CONTAINER }}
+          image: ${{ env.WORKER_IMAGE }}
+
+      - name: Deploy worker-service ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-engine.outputs.task-definition }}
+          cluster: ${{ env.ENGINE_CLUSTER }}
+          service: ${{ env.ENGINE_SERVICE }}
+          wait-for-service-stability: true
