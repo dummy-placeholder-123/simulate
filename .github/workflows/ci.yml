@@ -16,12 +16,44 @@ permissions:
   contents: read
 
 jobs:
-  infra:
-    name: Infra Build
+  fes-infra:
+    name: FES Infra Build
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: QCA/infra
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=dev
+
+  engine-infra:
+    name: Engine Infra Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/engine-infra
 
     steps:
       - name: Checkout

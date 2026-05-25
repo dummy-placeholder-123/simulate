@@ -1,0 +1,680 @@
+name: Deploy Pipeline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-pipeline
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: "564061926474"
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+
+jobs:
+  fes-infra-dev:
+    name: FES Infra Dev
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_STAGE: dev
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  engine-infra-dev:
+    name: Engine Infra Dev
+    runs-on: ubuntu-latest
+    needs: fes-infra-dev
+    env:
+      DEPLOY_STAGE: dev
+    defaults:
+      run:
+        working-directory: QCA/engine-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  engine-dev:
+    name: Engine Service Dev
+    runs-on: ubuntu-latest
+    needs: engine-infra-dev
+    env:
+      DEPLOY_STAGE: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve stage names
+        run: |
+          PREFIX="qca-${DEPLOY_STAGE}"
+          echo "ECR_REPOSITORY=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
+          echo "ECS_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
+          echo "ECS_TASK_DEFINITION=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ECS_CONTAINER_NAME=EngineContainer" >> ${GITHUB_ENV}
+          echo "IMAGE_ALIAS=${DEPLOY_STAGE}" >> ${GITHUB_ENV}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Package
+        working-directory: QCA/engine
+        run: mvn -B -DskipTests package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        working-directory: QCA/engine
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision=${IMAGE_TAG} \
+            --label org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_ALIAS} \
+            .
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_ALIAS}
+          echo "IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> ${GITHUB_ENV}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${ECS_TASK_DEFINITION} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render task definition
+        id: render-task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+          image: ${{ env.IMAGE_URI }}
+
+      - name: Deploy ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Enable workers
+        run: |
+          aws application-autoscaling register-scalable-target \
+            --service-namespace ecs \
+            --resource-id service/${ECS_CLUSTER}/${ECS_SERVICE} \
+            --scalable-dimension ecs:service:DesiredCount \
+            --min-capacity 1 \
+            --max-capacity 5
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${ECS_SERVICE} \
+            --desired-count 1
+          aws ecs wait services-stable \
+            --cluster ${ECS_CLUSTER} \
+            --services ${ECS_SERVICE}
+
+  fes-dev:
+    name: FES Service Dev
+    runs-on: ubuntu-latest
+    needs:
+      - fes-infra-dev
+      - engine-dev
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
+
+  approve-gamma:
+    name: Promote To Gamma
+    runs-on: ubuntu-latest
+    needs: fes-dev
+    environment: gamma
+    steps:
+      - name: Approved
+        run: echo "Gamma promotion approved"
+
+  fes-infra-gamma:
+    name: FES Infra Gamma
+    runs-on: ubuntu-latest
+    needs: approve-gamma
+    env:
+      DEPLOY_STAGE: gamma
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  engine-infra-gamma:
+    name: Engine Infra Gamma
+    runs-on: ubuntu-latest
+    needs: fes-infra-gamma
+    env:
+      DEPLOY_STAGE: gamma
+    defaults:
+      run:
+        working-directory: QCA/engine-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  engine-gamma:
+    name: Engine Service Gamma
+    runs-on: ubuntu-latest
+    needs: engine-infra-gamma
+    env:
+      DEPLOY_STAGE: gamma
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve stage names
+        run: |
+          PREFIX="qca-${DEPLOY_STAGE}"
+          echo "ECR_REPOSITORY=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
+          echo "ECS_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
+          echo "ECS_TASK_DEFINITION=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ECS_CONTAINER_NAME=EngineContainer" >> ${GITHUB_ENV}
+          echo "IMAGE_ALIAS=${DEPLOY_STAGE}" >> ${GITHUB_ENV}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Package
+        working-directory: QCA/engine
+        run: mvn -B -DskipTests package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        working-directory: QCA/engine
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision=${IMAGE_TAG} \
+            --label org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_ALIAS} \
+            .
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_ALIAS}
+          echo "IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> ${GITHUB_ENV}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${ECS_TASK_DEFINITION} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render task definition
+        id: render-task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+          image: ${{ env.IMAGE_URI }}
+
+      - name: Deploy ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Enable workers
+        run: |
+          aws application-autoscaling register-scalable-target \
+            --service-namespace ecs \
+            --resource-id service/${ECS_CLUSTER}/${ECS_SERVICE} \
+            --scalable-dimension ecs:service:DesiredCount \
+            --min-capacity 1 \
+            --max-capacity 5
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${ECS_SERVICE} \
+            --desired-count 1
+          aws ecs wait services-stable \
+            --cluster ${ECS_CLUSTER} \
+            --services ${ECS_SERVICE}
+
+  fes-gamma:
+    name: FES Service Gamma
+    runs-on: ubuntu-latest
+    needs:
+      - fes-infra-gamma
+      - engine-gamma
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
+
+  approve-prod:
+    name: Promote To Prod
+    runs-on: ubuntu-latest
+    needs: fes-gamma
+    environment: prod
+    steps:
+      - name: Approved
+        run: echo "Prod promotion approved"
+
+  fes-infra-prod:
+    name: FES Infra Prod
+    runs-on: ubuntu-latest
+    needs: approve-prod
+    env:
+      DEPLOY_STAGE: prod
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  engine-infra-prod:
+    name: Engine Infra Prod
+    runs-on: ubuntu-latest
+    needs: fes-infra-prod
+    env:
+      DEPLOY_STAGE: prod
+    defaults:
+      run:
+        working-directory: QCA/engine-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  engine-prod:
+    name: Engine Service Prod
+    runs-on: ubuntu-latest
+    needs: engine-infra-prod
+    env:
+      DEPLOY_STAGE: prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve stage names
+        run: |
+          PREFIX="qca"
+          echo "ECR_REPOSITORY=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
+          echo "ECS_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
+          echo "ECS_TASK_DEFINITION=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ECS_CONTAINER_NAME=EngineContainer" >> ${GITHUB_ENV}
+          echo "IMAGE_ALIAS=prod" >> ${GITHUB_ENV}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Package
+        working-directory: QCA/engine
+        run: mvn -B -DskipTests package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        working-directory: QCA/engine
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --label org.opencontainers.image.revision=${IMAGE_TAG} \
+            --label org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_ALIAS} \
+            .
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_ALIAS}
+          echo "IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> ${GITHUB_ENV}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${ECS_TASK_DEFINITION} \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render task definition
+        id: render-task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+          image: ${{ env.IMAGE_URI }}
+
+      - name: Deploy ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Enable workers
+        run: |
+          aws application-autoscaling register-scalable-target \
+            --service-namespace ecs \
+            --resource-id service/${ECS_CLUSTER}/${ECS_SERVICE} \
+            --scalable-dimension ecs:service:DesiredCount \
+            --min-capacity 1 \
+            --max-capacity 5
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${ECS_SERVICE} \
+            --desired-count 1
+          aws ecs wait services-stable \
+            --cluster ${ECS_CLUSTER} \
+            --services ${ECS_SERVICE}
+
+  fes-prod:
+    name: FES Service Prod
+    runs-on: ubuntu-latest
+    needs:
+      - fes-infra-prod
+      - engine-prod
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test

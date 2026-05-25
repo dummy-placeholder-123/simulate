@@ -1,0 +1,96 @@
+{
+  "/FesInfraStack-dev/ScanTable": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "ScanTable790E7D5E"
+      }
+    }
+  ],
+  "/FesInfraStack-dev/ScanIdempotencyTable": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "ScanIdempotencyTableD847B8CE"
+      }
+    }
+  ],
+  "/FesInfraStack-dev/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    }
+  ],
+  "/FesInfraStack-dev/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    }
+  ],
+  "/FesInfraStack-dev/ScanTable/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanTable790E7D5E"
+    }
+  ],
+  "/FesInfraStack-dev/ScanIdempotencyTable/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanIdempotencyTableD847B8CE"
+    }
+  ],
+  "/FesInfraStack-dev/ScanUploadBucket/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanUploadBucketC38C8A14"
+    }
+  ],
+  "/FesInfraStack-dev/ScanDeadLetterQueue/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanDeadLetterQueueD63E8F49"
+    }
+  ],
+  "/FesInfraStack-dev/ScanQueue/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanQueueEE21BF32"
+    }
+  ],
+  "/FesInfraStack-dev/ScanStateMachine/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanStateMachine95817142"
+    }
+  ],
+  "/FesInfraStack-dev/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    }
+  ],
+  "/FesInfraStack-dev/CDKMetadata/Condition": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadataAvailable"
+    }
+  ],
+  "/FesInfraStack-dev/ScanUploadBucket/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanUploadBucketPolicy87AEBEE6"
+    }
+  ],
+  "/FesInfraStack-dev/ScanStateMachine/Role/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanStateMachineRoleDACE90ED"
+    }
+  ],
+  "/FesInfraStack-dev/ScanStateMachine/Role/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScanStateMachineRoleDefaultPolicy04B35D09"
+    }
+  ]
+}
