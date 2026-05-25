@@ -1,13 +1,7 @@
 name: FES Build Image
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "QCA/fes/**"
-      - "QCA/fes/Dockerfile"
-      - ".github/workflows/fes-build-image.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read

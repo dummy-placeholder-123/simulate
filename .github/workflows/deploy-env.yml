@@ -1,12 +1,6 @@
 name: Deploy Environment
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "environments/*.yml"
-      - ".github/workflows/deploy-env.yml"
   workflow_dispatch:
     inputs:
       stage:
@@ -30,19 +24,13 @@ jobs:
   deploy:
     name: Deploy From Manifest
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'prod' }}
+    environment: ${{ inputs.stage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Determine stage
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "DEPLOY_STAGE=${{ inputs.stage }}" >> ${GITHUB_ENV}
-          else
-            # default for manifest push; if multiple files changed this keeps deterministic behavior
-            echo "DEPLOY_STAGE=prod" >> ${GITHUB_ENV}
-          fi
+        run: echo "DEPLOY_STAGE=${{ inputs.stage }}" >> ${GITHUB_ENV}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
