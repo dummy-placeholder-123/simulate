@@ -30,6 +30,7 @@ import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
 import software.amazon.awscdk.services.ecr.CfnRepository;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
+import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.logs.LogGroup;
@@ -42,9 +43,12 @@ import software.amazon.awscdk.services.s3.HttpMethods;
 import software.amazon.awscdk.services.sqs.DeadLetterQueue;
 import software.amazon.awscdk.services.sqs.Queue;
 import software.amazon.awscdk.services.stepfunctions.DefinitionBody;
+import software.amazon.awscdk.services.stepfunctions.IntegrationPattern;
+import software.amazon.awscdk.services.stepfunctions.JsonPath;
 import software.amazon.awscdk.services.stepfunctions.StateMachine;
 import software.amazon.awscdk.services.stepfunctions.StateMachineType;
 import software.amazon.awscdk.services.stepfunctions.TaskInput;
+import software.amazon.awscdk.services.stepfunctions.Timeout;
 import software.amazon.awscdk.services.stepfunctions.tasks.SqsSendMessage;
 
 import java.util.Map;
@@ -123,7 +127,24 @@ public class InfraStack extends Stack {
 
         SqsSendMessage sendScanToQueue = SqsSendMessage.Builder.create(this, "SendScanToQueue")
                 .queue(scanQueue)
-                .messageBody(TaskInput.fromJsonPathAt("$"))
+                .integrationPattern(IntegrationPattern.WAIT_FOR_TASK_TOKEN)
+                .taskTimeout(Timeout.duration(Duration.minutes(6)))
+                .resultPath("$.workerResult")
+                .messageBody(TaskInput.fromObject(Map.ofEntries(
+                        Map.entry("taskToken", JsonPath.getTaskToken()),
+                        Map.entry("eventType", JsonPath.stringAt("$.eventType")),
+                        Map.entry("scanId", JsonPath.stringAt("$.scanId")),
+                        Map.entry("accountId", JsonPath.stringAt("$.accountId")),
+                        Map.entry("repoFullName", JsonPath.stringAt("$.repoFullName")),
+                        Map.entry("prNumber", JsonPath.numberAt("$.prNumber")),
+                        Map.entry("headSha", JsonPath.stringAt("$.headSha")),
+                        Map.entry("useCase", JsonPath.stringAt("$.useCase")),
+                        Map.entry("service", JsonPath.stringAt("$.service")),
+                        Map.entry("uploadBucketName", JsonPath.stringAt("$.uploadBucketName")),
+                        Map.entry("uploadObjectKey", JsonPath.stringAt("$.uploadObjectKey")),
+                        Map.entry("resultBucketName", JsonPath.stringAt("$.resultBucketName")),
+                        Map.entry("resultObjectKey", JsonPath.stringAt("$.resultObjectKey")),
+                        Map.entry("queuedAt", JsonPath.stringAt("$.queuedAt")))))
                 .build();
 
         StateMachine.Builder.create(this, "ScanStateMachine")
@@ -199,8 +220,15 @@ public class InfraStack extends Stack {
                 .build();
 
         scanQueue.grantConsumeMessages(engineTaskDefinition.getTaskRole());
-        scanUploadBucket.grantRead(engineTaskDefinition.getTaskRole());
+        scanUploadBucket.grantReadWrite(engineTaskDefinition.getTaskRole());
         scanTable.grantWriteData(engineTaskDefinition.getTaskRole());
+        engineTaskDefinition.getTaskRole().addToPrincipalPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "states:SendTaskSuccess",
+                        "states:SendTaskFailure",
+                        "states:SendTaskHeartbeat"))
+                .resources(List.of("*"))
+                .build());
 
         engineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
                 .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
@@ -212,6 +240,8 @@ public class InfraStack extends Stack {
                         "AWS_REGION", "us-east-1",
                         "SCAN_QUEUE_URL", scanQueue.getQueueUrl(),
                         "SCAN_TABLE_NAME", "qca-scans",
+                        "SCAN_UPLOAD_BUCKET_NAME", scanUploadBucket.getBucketName(),
+                        "SCAN_RESULT_BUCKET_NAME", scanUploadBucket.getBucketName(),
                         "PROCESSING_SECONDS", "60"))
                 .build());
 

@@ -1,5 +1,6 @@
 package com.devashish.qca.fes.controller;
 
+import com.devashish.qca.fes.dto.ScanFindingsResponse;
 import com.devashish.qca.fes.dto.ScanRequest;
 import com.devashish.qca.fes.dto.ScanListResponse;
 import com.devashish.qca.fes.dto.ScanResponse;
@@ -46,6 +47,11 @@ public class FrontController {
             @PathVariable String accountId,
             @RequestParam(defaultValue = "50") Integer limit) {
         return ResponseEntity.ok(scanService.listScansByAccountId(accountId, limit));
+    }
+
+    @GetMapping("/scans/{scanId}/findings")
+    public ResponseEntity<ScanFindingsResponse> getScanFindings(@PathVariable String scanId) {
+        return ResponseEntity.ok(scanService.getScanFindings(scanId));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

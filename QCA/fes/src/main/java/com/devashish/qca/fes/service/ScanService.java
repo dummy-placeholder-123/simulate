@@ -1,11 +1,13 @@
 package com.devashish.qca.fes.service;
 
+import com.devashish.qca.fes.dto.ScanFindingsResponse;
 import com.devashish.qca.fes.dto.ScanListResponse;
 import com.devashish.qca.fes.dto.ScanRequest;
 import com.devashish.qca.fes.dto.ScanResponse;
 import com.devashish.qca.fes.dto.StartScanRequest;
 import com.devashish.qca.fes.dto.StartScanResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,9 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -37,6 +42,7 @@ public class ScanService {
     private static final String DUPLICATE = "DUPLICATE";
 
     private final DynamoDbClient dynamoDbClient;
+    private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final SfnClient sfnClient;
     private final ObjectMapper objectMapper;
@@ -49,6 +55,7 @@ public class ScanService {
 
     public ScanService(
             DynamoDbClient dynamoDbClient,
+            S3Client s3Client,
             S3Presigner s3Presigner,
             SfnClient sfnClient,
             ObjectMapper objectMapper,
@@ -59,6 +66,7 @@ public class ScanService {
             @Value("${qca.idempotency.ttl-hours}") long idempotencyTtlHours,
             @Value("${qca.s3.presigned-url-duration-minutes}") long presignedUrlDurationMinutes) {
         this.dynamoDbClient = dynamoDbClient;
+        this.s3Client = s3Client;
         this.s3Presigner = s3Presigner;
         this.sfnClient = sfnClient;
         this.objectMapper = objectMapper;
@@ -134,6 +142,42 @@ public class ScanService {
                 .toList();
     }
 
+    public ScanFindingsResponse getScanFindings(String scanId) {
+        if (!hasText(scanId)) {
+            throw new IllegalArgumentException("scanId is required");
+        }
+
+        Map<String, AttributeValue> scanItem = getScanItem(scanId);
+        if (scanItem.isEmpty()) {
+            throw new IllegalArgumentException("scan not found");
+        }
+
+        String resultBucketName = stringAttribute(scanItem, "resultBucketName", scanUploadBucketName);
+        String resultObjectKey = stringAttribute(scanItem, "resultObjectKey", null);
+        if (!hasText(resultObjectKey)) {
+            throw new IllegalArgumentException("scan findings are not available yet");
+        }
+
+        try {
+            JsonNode findings = objectMapper.readTree(s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                            .bucket(resultBucketName)
+                            .key(resultObjectKey)
+                            .build())
+                    .asByteArray());
+
+            return new ScanFindingsResponse(
+                    scanId,
+                    stringAttribute(scanItem, "status", null),
+                    resultBucketName,
+                    resultObjectKey,
+                    findings);
+        } catch (NoSuchKeyException e) {
+            throw new IllegalArgumentException("scan findings file not found");
+        } catch (Exception e) {
+            throw new IllegalStateException("failed to read scan findings", e);
+        }
+    }
+
     private ScanResponse duplicateResponse(
             ScanRequest request,
             String fallbackScanId,
@@ -204,6 +248,8 @@ public class ScanService {
         item.put("idempotencyExpiresAt", numberValue(expiresAt));
         item.put("uploadBucketName", stringValue(scanUploadBucketName));
         item.put("uploadObjectKey", stringValue(uploadObjectKey(request, scanId)));
+        item.put("resultBucketName", stringValue(scanUploadBucketName));
+        item.put("resultObjectKey", stringValue(resultObjectKey(request, scanId)));
 
         dynamoDbClient.putItem(PutItemRequest.builder()
                 .tableName(scanTableName)
@@ -235,6 +281,8 @@ public class ScanService {
         message.put("service", stringAttribute(scanItem, "service", null));
         message.put("uploadBucketName", stringAttribute(scanItem, "uploadBucketName", scanUploadBucketName));
         message.put("uploadObjectKey", stringAttribute(scanItem, "uploadObjectKey", null));
+        message.put("resultBucketName", stringAttribute(scanItem, "resultBucketName", scanUploadBucketName));
+        message.put("resultObjectKey", stringAttribute(scanItem, "resultObjectKey", null));
         message.put("queuedAt", queuedAt);
 
         sfnClient.startExecution(StartExecutionRequest.builder()
@@ -302,6 +350,10 @@ public class ScanService {
 
     private String uploadObjectKey(ScanRequest request, String scanId) {
         return "scans/%s/%s/input".formatted(request.accountId(), scanId);
+    }
+
+    private String resultObjectKey(ScanRequest request, String scanId) {
+        return "scans/%s/%s/findings.json".formatted(request.accountId(), scanId);
     }
 
     private record PresignedUpload(String url, String expiresAt) {

@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.sfn.SfnClient;
 
@@ -21,6 +22,13 @@ public class DynamoDbConfig {
     @Bean
     public S3Presigner s3Presigner(@Value("${qca.aws.region}") String awsRegion) {
         return S3Presigner.builder()
+                .region(Region.of(awsRegion))
+                .build();
+    }
+
+    @Bean
+    public S3Client s3Client(@Value("${qca.aws.region}") String awsRegion) {
+        return S3Client.builder()
                 .region(Region.of(awsRegion))
                 .build();
     }

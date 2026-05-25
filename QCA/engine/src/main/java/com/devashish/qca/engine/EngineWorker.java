@@ -1,9 +1,11 @@
 package com.devashish.qca.engine;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -12,10 +14,14 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import software.amazon.awssdk.services.sfn.SfnClient;
+import software.amazon.awssdk.services.sfn.model.SendTaskFailureRequest;
+import software.amazon.awssdk.services.sfn.model.SendTaskSuccessRequest;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -34,12 +40,19 @@ public class EngineWorker {
     private final SqsClient sqsClient;
     private final S3Client s3Client;
     private final DynamoDbClient dynamoDbClient;
+    private final SfnClient sfnClient;
     private final WorkerConfig config;
 
-    public EngineWorker(SqsClient sqsClient, S3Client s3Client, DynamoDbClient dynamoDbClient, WorkerConfig config) {
+    public EngineWorker(
+            SqsClient sqsClient,
+            S3Client s3Client,
+            DynamoDbClient dynamoDbClient,
+            SfnClient sfnClient,
+            WorkerConfig config) {
         this.sqsClient = sqsClient;
         this.s3Client = s3Client;
         this.dynamoDbClient = dynamoDbClient;
+        this.sfnClient = sfnClient;
         this.config = config;
     }
 
@@ -49,8 +62,9 @@ public class EngineWorker {
 
         try (SqsClient sqsClient = SqsClient.builder().region(region).build();
              S3Client s3Client = S3Client.builder().region(region).build();
-             DynamoDbClient dynamoDbClient = DynamoDbClient.builder().region(region).build()) {
-            new EngineWorker(sqsClient, s3Client, dynamoDbClient, config).run();
+             DynamoDbClient dynamoDbClient = DynamoDbClient.builder().region(region).build();
+             SfnClient sfnClient = SfnClient.builder().region(region).build()) {
+            new EngineWorker(sqsClient, s3Client, dynamoDbClient, sfnClient, config).run();
         }
     }
 
@@ -90,20 +104,43 @@ public class EngineWorker {
 
         try {
             LOGGER.info("Processing scan scanId={} accountId={}", scanMessage.scanId(), scanMessage.accountId());
-            updateStatus(scanMessage.scanId(), "RUNNING", "startedAt", Instant.now().toString(), null);
+            updateStatus(scanMessage.scanId(), "RUNNING", "startedAt", Instant.now().toString(), null, null, null);
 
             long objectSize = downloadInput(scanMessage);
             Thread.sleep(config.processingDuration().toMillis());
 
-            updateStatus(scanMessage.scanId(), "COMPLETED", "completedAt", Instant.now().toString(), objectSize);
+            String completedAt = Instant.now().toString();
+            String resultBucketName = resultBucketName(scanMessage);
+            String resultObjectKey = resultObjectKey(scanMessage);
+            writeFindings(scanMessage, completedAt, objectSize, resultBucketName, resultObjectKey);
+            updateStatus(
+                    scanMessage.scanId(),
+                    "COMPLETED",
+                    "completedAt",
+                    completedAt,
+                    objectSize,
+                    resultBucketName,
+                    resultObjectKey);
+            sendTaskSuccess(scanMessage, completedAt, objectSize, resultBucketName, resultObjectKey);
             deleteMessage(message);
             LOGGER.info("Completed scan scanId={} bytes={}", scanMessage.scanId(), objectSize);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             LOGGER.warn("Worker interrupted while processing scanId={}", scanMessage.scanId());
         } catch (Exception e) {
-            updateStatus(scanMessage.scanId(), "FAILED", "failedAt", Instant.now().toString(), null);
-            LOGGER.error("Failed scan scanId={}; message will be retried or moved to DLQ", scanMessage.scanId(), e);
+            String failedAt = Instant.now().toString();
+            try {
+                updateStatus(scanMessage.scanId(), "FAILED", "failedAt", failedAt, null, null, null);
+                sendTaskFailure(scanMessage, e);
+                deleteMessage(message);
+            } catch (Exception callbackException) {
+                LOGGER.error(
+                        "Failed scan scanId={}; message will be retried or moved to DLQ",
+                        scanMessage.scanId(),
+                        callbackException);
+                return;
+            }
+            LOGGER.error("Failed scan scanId={}; Step Functions callback sent", scanMessage.scanId(), e);
         }
     }
 
@@ -125,7 +162,43 @@ public class EngineWorker {
         }
     }
 
-    private void updateStatus(String scanId, String status, String timestampAttribute, String timestamp, Long objectSize) {
+    private void writeFindings(
+            ScanMessage scanMessage,
+            String completedAt,
+            long objectSize,
+            String resultBucketName,
+            String resultObjectKey) throws JsonProcessingException {
+        byte[] body = OBJECT_MAPPER.writeValueAsBytes(Map.of(
+                "scanId", scanMessage.scanId(),
+                "accountId", scanMessage.accountId(),
+                "repoFullName", scanMessage.repoFullName(),
+                "prNumber", scanMessage.prNumber(),
+                "headSha", scanMessage.headSha(),
+                "status", "COMPLETED",
+                "completedAt", completedAt,
+                "inputObjectSizeBytes", objectSize,
+                "findings", List.of(Map.of(
+                        "id", "qca-placeholder-finding",
+                        "severity", "INFO",
+                        "title", "Scan completed",
+                        "description", "Engine processed the uploaded archive successfully."))));
+
+        s3Client.putObject(PutObjectRequest.builder()
+                        .bucket(resultBucketName)
+                        .key(resultObjectKey)
+                        .contentType("application/json")
+                        .build(),
+                RequestBody.fromBytes(body));
+    }
+
+    private void updateStatus(
+            String scanId,
+            String status,
+            String timestampAttribute,
+            String timestamp,
+            Long objectSize,
+            String resultBucketName,
+            String resultObjectKey) {
         Map<String, AttributeValue> values = new java.util.HashMap<>();
         values.put(":status", stringValue(status));
         values.put(":timestamp", stringValue(timestamp));
@@ -136,6 +209,11 @@ public class EngineWorker {
         if (objectSize != null) {
             values.put(":objectSize", numberValue(objectSize));
             updateExpression += ", inputObjectSizeBytes = :objectSize";
+        }
+        if (resultObjectKey != null) {
+            values.put(":resultBucketName", stringValue(resultBucketName));
+            values.put(":resultObjectKey", stringValue(resultObjectKey));
+            updateExpression += ", resultBucketName = :resultBucketName, resultObjectKey = :resultObjectKey";
         }
 
         dynamoDbClient.updateItem(UpdateItemRequest.builder()
@@ -154,6 +232,56 @@ public class EngineWorker {
                 .build());
     }
 
+    private void sendTaskSuccess(
+            ScanMessage scanMessage,
+            String completedAt,
+            long objectSize,
+            String resultBucketName,
+            String resultObjectKey) throws IOException {
+        sfnClient.sendTaskSuccess(SendTaskSuccessRequest.builder()
+                .taskToken(scanMessage.taskToken())
+                .output(OBJECT_MAPPER.writeValueAsString(Map.of(
+                        "scanId", scanMessage.scanId(),
+                        "status", "COMPLETED",
+                        "completedAt", completedAt,
+                        "inputObjectSizeBytes", objectSize,
+                        "resultBucketName", resultBucketName,
+                        "resultObjectKey", resultObjectKey,
+                        "workerId", config.workerId())))
+                .build());
+    }
+
+    private void sendTaskFailure(ScanMessage scanMessage, Exception exception) {
+        sfnClient.sendTaskFailure(SendTaskFailureRequest.builder()
+                .taskToken(scanMessage.taskToken())
+                .error(exception.getClass().getSimpleName())
+                .cause(truncate(exception.getMessage(), 500))
+                .build());
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
+    }
+
+    private String resultObjectKey(ScanMessage scanMessage) {
+        return hasText(scanMessage.resultObjectKey())
+                ? scanMessage.resultObjectKey()
+                : "scans/%s/%s/findings.json".formatted(scanMessage.accountId(), scanMessage.scanId());
+    }
+
+    private String resultBucketName(ScanMessage scanMessage) {
+        return hasText(scanMessage.resultBucketName())
+                ? scanMessage.resultBucketName()
+                : config.scanResultBucketName();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private AttributeValue stringValue(String value) {
         return AttributeValue.builder().s(value).build();
     }
@@ -164,6 +292,7 @@ public class EngineWorker {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private record ScanMessage(
+            String taskToken,
             String eventType,
             String scanId,
             String accountId,
@@ -174,6 +303,8 @@ public class EngineWorker {
             String service,
             String uploadBucketName,
             String uploadObjectKey,
+            String resultBucketName,
+            String resultObjectKey,
             String queuedAt
     ) {
     }
@@ -182,6 +313,7 @@ public class EngineWorker {
             String awsRegion,
             String scanQueueUrl,
             String scanTableName,
+            String scanResultBucketName,
             String workerId,
             Duration processingDuration
     ) {
@@ -190,6 +322,7 @@ public class EngineWorker {
                     env("AWS_REGION", "us-east-1"),
                     requiredEnv("SCAN_QUEUE_URL"),
                     env("SCAN_TABLE_NAME", "qca-scans"),
+                    env("SCAN_RESULT_BUCKET_NAME", requiredEnv("SCAN_UPLOAD_BUCKET_NAME")),
                     env("WORKER_ID", defaultWorkerId()),
                     Duration.ofSeconds(Long.parseLong(env("PROCESSING_SECONDS", "60"))));
         }
