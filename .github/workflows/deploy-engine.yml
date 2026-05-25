@@ -1,0 +1,84 @@
+name: Deploy Engine
+run-name: Engine Release From Manifest
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+
+jobs:
+  deploy:
+    name: Deploy Engine From Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ECR registry
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
+
+      - name: Read manifest
+        run: python3 scripts/deploy/read_manifest.py
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## Engine Deployment"
+            echo ""
+            echo "- Operation: ${DEPLOY_OPERATION}"
+            echo "- Release: ${RELEASE_NAME}"
+            echo "- Stage: ${DEPLOY_STAGE}"
+            echo "- Worker service tag: ${WORKER_TAG}"
+            echo "- Worker scaling: min=${WORKER_MIN_CAPACITY}, max=${WORKER_MAX_CAPACITY}"
+          } >> ${GITHUB_STEP_SUMMARY}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image stamp tags
+        run: |
+          echo "SHA_TAG=${GITHUB_SHA}" >> ${GITHUB_ENV}
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> ${GITHUB_ENV}
+
+      - name: Build and push worker-service image
+        run: bash scripts/deploy/build_and_push.sh QCA/engine ${WORKER_REPOSITORY} ${WORKER_TAG}
+
+      - name: Resolve ECS names
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          if [ "${DEPLOY_STAGE}" = "prod" ]; then
+            PREFIX="qca"
+          else
+            PREFIX="qca-${DEPLOY_STAGE}"
+          fi
+          echo "ENGINE_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
+          echo "ENGINE_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
+          echo "ENGINE_TASK_FAMILY=${PREFIX}-engine" >> ${GITHUB_ENV}
+          echo "ENGINE_CONTAINER=EngineContainer" >> ${GITHUB_ENV}
+
+      - name: Deploy worker-service ECS service
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          bash scripts/deploy/deploy_ecs.sh \
+            ${ENGINE_CLUSTER} \
+            ${ENGINE_SERVICE} \
+            ${ENGINE_TASK_FAMILY} \
+            ${ENGINE_CONTAINER} \
+            ${WORKER_IMAGE} \
+            ${WORKER_MIN_CAPACITY} \
+            ${WORKER_MAX_CAPACITY} \
+            engine

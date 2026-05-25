@@ -1,5 +1,5 @@
-name: Deploy Environment
-run-name: Release From Manifest
+name: Deploy FES
+run-name: FES Release From Manifest
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ env:
 
 jobs:
   deploy:
-    name: Deploy From Manifest
+    name: Deploy FES From Manifest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,19 +37,16 @@ jobs:
       - name: Write deployment summary
         run: |
           {
-            echo "## Deployment"
+            echo "## FES Deployment"
             echo ""
             echo "- Operation: ${DEPLOY_OPERATION}"
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
             echo "- Generic service tag: ${GENERIC_TAG}"
-            echo "- Worker service tag: ${WORKER_TAG}"
             echo "- Generic scaling: min=${GENERIC_MIN_CAPACITY}, max=${GENERIC_MAX_CAPACITY}"
-            echo "- Worker scaling: min=${WORKER_MIN_CAPACITY}, max=${WORKER_MAX_CAPACITY}"
           } >> ${GITHUB_STEP_SUMMARY}
 
       - name: Login to Amazon ECR
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Resolve image stamp tags
@@ -60,9 +57,6 @@ jobs:
       - name: Build and push generic-service image
         run: bash scripts/deploy/build_and_push.sh QCA/fes ${GENERIC_REPOSITORY} ${GENERIC_TAG}
 
-      - name: Build and push worker-service image
-        run: bash scripts/deploy/build_and_push.sh QCA/engine ${WORKER_REPOSITORY} ${WORKER_TAG}
-
       - name: Resolve ECS names
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
         run: |
@@ -72,26 +66,9 @@ jobs:
             PREFIX="qca-${DEPLOY_STAGE}"
           fi
           echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
-          echo "ENGINE_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
-          echo "ENGINE_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
-          echo "ENGINE_TASK_FAMILY=${PREFIX}-engine" >> ${GITHUB_ENV}
-          echo "ENGINE_CONTAINER=EngineContainer" >> ${GITHUB_ENV}
           echo "FES_SERVICE=${PREFIX}-fes-service" >> ${GITHUB_ENV}
           echo "FES_TASK_FAMILY=${PREFIX}-fes" >> ${GITHUB_ENV}
           echo "FES_CONTAINER=FesContainer" >> ${GITHUB_ENV}
-
-      - name: Deploy worker-service ECS service
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
-        run: |
-          bash scripts/deploy/deploy_ecs.sh \
-            ${ENGINE_CLUSTER} \
-            ${ENGINE_SERVICE} \
-            ${ENGINE_TASK_FAMILY} \
-            ${ENGINE_CONTAINER} \
-            ${WORKER_IMAGE} \
-            ${WORKER_MIN_CAPACITY} \
-            ${WORKER_MAX_CAPACITY} \
-            engine
 
       - name: Deploy generic-service ECS service
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
