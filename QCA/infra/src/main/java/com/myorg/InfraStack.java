@@ -154,7 +154,7 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
-        CfnRepository engineRepository = CfnRepository.Builder.create(this, "EngineRepository")
+        CfnRepository engineRepository = CfnRepository.Builder.create(this, "EngineImageRepository")
                 .repositoryName("qca-engine")
                 .imageScanningConfiguration(CfnRepository.ImageScanningConfigurationProperty.builder()
                         .scanOnPush(true)
