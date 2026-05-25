@@ -3,7 +3,7 @@ environment: dev
 services:
   generic-service:
     image: qca-fes
-    tag: 1263deef81880c0e16b9ff12b1eb725951f89e94
+    tag: ff875574f12fcd065cfd27f9ce9ab6f017ae7ec7
   worker-service:
     image: qca-engine
     tag: 1263deef81880c0e16b9ff12b1eb725951f89e94
