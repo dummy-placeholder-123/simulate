@@ -3,7 +3,7 @@ environment: dev
 services:
   generic-service:
     image: qca-fes
-    tag: replace-with-commit-sha
+    tag: 1263deef81880c0e16b9ff12b1eb725951f89e94
   worker-service:
     image: qca-engine
-    tag: replace-with-commit-sha
+    tag: 1263deef81880c0e16b9ff12b1eb725951f89e94
