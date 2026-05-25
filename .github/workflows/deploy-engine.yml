@@ -7,6 +7,10 @@ on:
     paths:
       - "QCA/engine/**"
       - ".github/workflows/deploy-engine.yml"
+  pull_request:
+    paths:
+      - "QCA/engine/**"
+      - ".github/workflows/deploy-engine.yml"
   workflow_dispatch:
 
 permissions:
@@ -49,21 +53,28 @@ jobs:
           java-version: "17"
           cache: maven
 
+      - name: Test
+        working-directory: QCA/engine
+        run: mvn -B test
+
       - name: Package
         working-directory: QCA/engine
         run: mvn -B -DskipTests package
 
       - name: Configure AWS credentials
+        if: ${{ github.event_name != 'pull_request' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: ${{ github.event_name != 'pull_request' }}
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push image
+        if: ${{ github.event_name != 'pull_request' }}
         working-directory: QCA/engine
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -80,6 +91,7 @@ jobs:
           echo "IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> ${GITHUB_ENV}
 
       - name: Download current task definition
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
           aws ecs describe-task-definition \
             --task-definition ${ECS_TASK_DEFINITION} \
@@ -87,6 +99,7 @@ jobs:
             > task-definition.json
 
       - name: Render task definition
+        if: ${{ github.event_name != 'pull_request' }}
         id: render-task-definition
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
@@ -95,6 +108,7 @@ jobs:
           image: ${{ env.IMAGE_URI }}
 
       - name: Deploy ECS service
+        if: ${{ github.event_name != 'pull_request' }}
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
@@ -103,6 +117,7 @@ jobs:
           wait-for-service-stability: true
 
       - name: Enable workers
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
           aws application-autoscaling register-scalable-target \
             --service-namespace ecs \
@@ -122,6 +137,7 @@ jobs:
     name: Gamma
     runs-on: ubuntu-latest
     needs: dev
+    if: ${{ github.event_name != 'pull_request' }}
     environment: gamma
     env:
       DEPLOY_STAGE: gamma
@@ -146,6 +162,10 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
+
+      - name: Test
+        working-directory: QCA/engine
+        run: mvn -B test
 
       - name: Package
         working-directory: QCA/engine
@@ -220,6 +240,7 @@ jobs:
     name: Prod
     runs-on: ubuntu-latest
     needs: gamma
+    if: ${{ github.event_name != 'pull_request' }}
     environment: prod
     env:
       DEPLOY_STAGE: prod
@@ -244,6 +265,10 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
+
+      - name: Test
+        working-directory: QCA/engine
+        run: mvn -B test
 
       - name: Package
         working-directory: QCA/engine
