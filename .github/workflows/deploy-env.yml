@@ -49,6 +49,8 @@ jobs:
           echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
 
       - name: Read manifest
+        env:
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
         run: |
           python3 - <<'PY'
           import os
