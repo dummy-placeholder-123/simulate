@@ -38,6 +38,11 @@ jobs:
           role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Resolve ECR registry
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
+
       - name: Read manifest
         run: |
           python3 - <<'PY'
@@ -49,11 +54,14 @@ jobs:
               doc = yaml.safe_load(f)
           gs = doc["services"]["generic-service"]
           ws = doc["services"]["worker-service"]
-          print(f"GENERIC_IMAGE={gs['image']}:{gs['tag']}")
-          print(f"WORKER_IMAGE={ws['image']}:{ws['tag']}")
+          ecr_registry = os.environ["ECR_REGISTRY"]
+          generic_image = f"{ecr_registry}/{gs['image']}:{gs['tag']}"
+          worker_image = f"{ecr_registry}/{ws['image']}:{ws['tag']}"
+          print(f"GENERIC_IMAGE={generic_image}")
+          print(f"WORKER_IMAGE={worker_image}")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
-              out.write(f"GENERIC_IMAGE={gs['image']}:{gs['tag']}\n")
-              out.write(f"WORKER_IMAGE={ws['image']}:{ws['tag']}\n")
+              out.write(f"GENERIC_IMAGE={generic_image}\n")
+              out.write(f"WORKER_IMAGE={worker_image}\n")
           PY
 
       - name: Resolve ECS names
