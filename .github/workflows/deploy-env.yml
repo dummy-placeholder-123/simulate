@@ -1,21 +1,8 @@
 name: Deploy Environment
-run-name: Deploy ${{ inputs.stage }} | ${{ inputs.release_name }}
+run-name: Release From Manifest
 
 on:
   workflow_dispatch:
-    inputs:
-      stage:
-        description: Environment file to deploy
-        required: true
-        type: choice
-        options:
-          - dev
-          - qa
-          - prod
-      release_name:
-        description: Human-readable release name
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -29,13 +16,9 @@ jobs:
   deploy:
     name: Deploy From Manifest
     runs-on: ubuntu-latest
-    environment: ${{ inputs.stage }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Determine stage
-        run: echo "DEPLOY_STAGE=${{ inputs.stage }}" >> ${GITHUB_ENV}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -49,60 +32,14 @@ jobs:
           echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
 
       - name: Read manifest
-        env:
-          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
-        run: |
-          python3 - <<'PY'
-          import os
-          import yaml
-          stage = os.environ["DEPLOY_STAGE"]
-          input_release_name = os.environ["INPUT_RELEASE_NAME"].strip()
-          path = f"environments/{stage}.yml"
-          with open(path, "r", encoding="utf-8") as f:
-              doc = yaml.safe_load(f)
-          release = doc.get("release") or {}
-          manifest_release_name = (release.get("name") or "").strip()
-          if manifest_release_name and manifest_release_name != input_release_name:
-              raise SystemExit(
-                  f"workflow release_name '{input_release_name}' does not match "
-                  f"manifest release.name '{manifest_release_name}'")
-          release_name = input_release_name or manifest_release_name
-          if not release_name:
-              raise SystemExit("release_name is required")
-          gs = doc["services"]["generic-service"]
-          ws = doc["services"]["worker-service"]
-          ecr_registry = os.environ["ECR_REGISTRY"]
-          generic_image = f"{ecr_registry}/{gs['image']}:{gs['tag']}"
-          worker_image = f"{ecr_registry}/{ws['image']}:{ws['tag']}"
-          generic_scaling = gs.get("scaling", {})
-          worker_scaling = ws.get("scaling", {})
-          generic_min = int(generic_scaling.get("minCapacity", 1))
-          generic_max = int(generic_scaling.get("maxCapacity", 5))
-          worker_min = int(worker_scaling.get("minCapacity", 1))
-          worker_max = int(worker_scaling.get("maxCapacity", 5))
-          if generic_min < 0 or worker_min < 0:
-              raise SystemExit("minCapacity must be >= 0")
-          if generic_max < generic_min or worker_max < worker_min:
-              raise SystemExit("maxCapacity must be >= minCapacity")
-          print(f"GENERIC_IMAGE={generic_image}")
-          print(f"WORKER_IMAGE={worker_image}")
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
-              out.write(f"RELEASE_NAME={release_name}\n")
-              out.write(f"GENERIC_IMAGE={generic_image}\n")
-              out.write(f"WORKER_IMAGE={worker_image}\n")
-              out.write(f"GENERIC_TAG={gs['tag']}\n")
-              out.write(f"WORKER_TAG={ws['tag']}\n")
-              out.write(f"GENERIC_MIN_CAPACITY={generic_min}\n")
-              out.write(f"GENERIC_MAX_CAPACITY={generic_max}\n")
-              out.write(f"WORKER_MIN_CAPACITY={worker_min}\n")
-              out.write(f"WORKER_MAX_CAPACITY={worker_max}\n")
-          PY
+        run: python3 scripts/deploy/read_manifest.py
 
       - name: Write deployment summary
         run: |
           {
             echo "## Deployment"
             echo ""
+            echo "- Operation: ${DEPLOY_OPERATION}"
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
             echo "- Generic service tag: ${GENERIC_TAG}"
@@ -111,7 +48,23 @@ jobs:
             echo "- Worker scaling: min=${WORKER_MIN_CAPACITY}, max=${WORKER_MAX_CAPACITY}"
           } >> ${GITHUB_STEP_SUMMARY}
 
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image stamp tags
+        run: |
+          echo "SHA_TAG=${GITHUB_SHA}" >> ${GITHUB_ENV}
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> ${GITHUB_ENV}
+
+      - name: Build and push generic-service image
+        run: bash scripts/deploy/build_and_push.sh QCA/fes ${GENERIC_REPOSITORY} ${GENERIC_TAG}
+
+      - name: Build and push worker-service image
+        run: bash scripts/deploy/build_and_push.sh QCA/engine ${WORKER_REPOSITORY} ${WORKER_TAG}
+
       - name: Resolve ECS names
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
         run: |
           if [ "${DEPLOY_STAGE}" = "prod" ]; then
             PREFIX="qca"
@@ -127,78 +80,28 @@ jobs:
           echo "FES_TASK_FAMILY=${PREFIX}-fes" >> ${GITHUB_ENV}
           echo "FES_CONTAINER=FesContainer" >> ${GITHUB_ENV}
 
-      - name: Configure engine autoscaling capacity
-        run: |
-          aws application-autoscaling register-scalable-target \
-            --service-namespace ecs \
-            --scalable-dimension ecs:service:DesiredCount \
-            --resource-id service/${ENGINE_CLUSTER}/${ENGINE_SERVICE} \
-            --min-capacity ${WORKER_MIN_CAPACITY} \
-            --max-capacity ${WORKER_MAX_CAPACITY}
-
-      - name: Set engine service desired count to worker min capacity
-        run: |
-          aws ecs update-service \
-            --cluster ${ENGINE_CLUSTER} \
-            --service ${ENGINE_SERVICE} \
-            --desired-count ${WORKER_MIN_CAPACITY}
-
-      - name: Configure FES autoscaling capacity
-        run: |
-          aws application-autoscaling register-scalable-target \
-            --service-namespace ecs \
-            --scalable-dimension ecs:service:DesiredCount \
-            --resource-id service/${ECS_CLUSTER}/${FES_SERVICE} \
-            --min-capacity ${GENERIC_MIN_CAPACITY} \
-            --max-capacity ${GENERIC_MAX_CAPACITY}
-
-      - name: Set FES service desired count to generic min capacity
-        run: |
-          aws ecs update-service \
-            --cluster ${ECS_CLUSTER} \
-            --service ${FES_SERVICE} \
-            --desired-count ${GENERIC_MIN_CAPACITY}
-
-      - name: Update worker-service ECS task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${ENGINE_TASK_FAMILY} \
-            --query taskDefinition > engine-taskdef.json
-
-      - name: Update generic-service ECS task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${FES_TASK_FAMILY} \
-            --query taskDefinition > fes-taskdef.json
-
-      - name: Render worker-service task definition
-        id: render-engine
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: engine-taskdef.json
-          container-name: ${{ env.ENGINE_CONTAINER }}
-          image: ${{ env.WORKER_IMAGE }}
-
       - name: Deploy worker-service ECS service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-engine.outputs.task-definition }}
-          cluster: ${{ env.ENGINE_CLUSTER }}
-          service: ${{ env.ENGINE_SERVICE }}
-          wait-for-service-stability: true
-
-      - name: Render generic-service task definition
-        id: render-fes
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: fes-taskdef.json
-          container-name: ${{ env.FES_CONTAINER }}
-          image: ${{ env.GENERIC_IMAGE }}
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          bash scripts/deploy/deploy_ecs.sh \
+            ${ENGINE_CLUSTER} \
+            ${ENGINE_SERVICE} \
+            ${ENGINE_TASK_FAMILY} \
+            ${ENGINE_CONTAINER} \
+            ${WORKER_IMAGE} \
+            ${WORKER_MIN_CAPACITY} \
+            ${WORKER_MAX_CAPACITY} \
+            engine
 
       - name: Deploy generic-service ECS service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-fes.outputs.task-definition }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          service: ${{ env.FES_SERVICE }}
-          wait-for-service-stability: true
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          bash scripts/deploy/deploy_ecs.sh \
+            ${ECS_CLUSTER} \
+            ${FES_SERVICE} \
+            ${FES_TASK_FAMILY} \
+            ${FES_CONTAINER} \
+            ${GENERIC_IMAGE} \
+            ${GENERIC_MIN_CAPACITY} \
+            ${GENERIC_MAX_CAPACITY} \
+            fes

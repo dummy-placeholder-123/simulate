@@ -1,6 +1,10 @@
+# deployment.operation = deploy or push-only; only one file should have deployment
+# release-name = human-readable deployment label
+# services.*.tag = agreed deploy tag; workflow also pushes sha and date tags
 environment: dev
-release:
-  name: dev-fes-alb-status
+deployment:
+  operation: deploy
+release-name: dev-fes-alb-status
 
 services:
   generic-service:
@@ -8,10 +12,8 @@ services:
     tag: first-custom-tag-build-img
     scaling:
       minCapacity: 1
-      maxCapacity: 5
   worker-service:
     image: qca-engine
     tag: first-custom-tag-build-img
     scaling:
       minCapacity: 1
-      maxCapacity: 5

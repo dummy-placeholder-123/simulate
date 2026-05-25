@@ -1,17 +1,17 @@
+# deployment.operation = deploy or push-only; only one file should have deployment
+# release-name = human-readable deployment label
+# services.*.tag = agreed deploy tag; workflow also pushes sha and date tags
 environment: qa
-release:
-  name: qa-pending
+release-name: qa-pending
 
 services:
   generic-service:
     image: qca-fes
-    tag: replace-with-commit-sha
+    tag: replace-with-agreed-deploy-tag
     scaling:
       minCapacity: 1
-      maxCapacity: 5
   worker-service:
     image: qca-engine
-    tag: replace-with-commit-sha
+    tag: replace-with-agreed-deploy-tag
     scaling:
       minCapacity: 1
-      maxCapacity: 5
