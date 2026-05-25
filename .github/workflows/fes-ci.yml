@@ -1,0 +1,74 @@
+name: FES CI
+
+on:
+  push:
+    paths:
+      - "QCA/fes/**"
+      - "QCA/fes-infra/**"
+      - ".github/workflows/fes-ci.yml"
+      - ".github/workflows/fes-cicd.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "QCA/fes/**"
+      - "QCA/fes-infra/**"
+      - ".github/workflows/fes-ci.yml"
+      - ".github/workflows/fes-cicd.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-infra:
+    name: Verify FES Infra
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=dev
+
+  verify-service:
+    name: Verify FES Service
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
