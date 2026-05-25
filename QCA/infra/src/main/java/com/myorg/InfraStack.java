@@ -1,5 +1,6 @@
 package com.myorg;
 
+import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
@@ -13,6 +14,9 @@ import software.amazon.awscdk.services.dynamodb.GlobalSecondaryIndexProps;
 import software.amazon.awscdk.services.dynamodb.ITable;
 import software.amazon.awscdk.services.dynamodb.ProjectionType;
 import software.amazon.awscdk.services.dynamodb.Table;
+import software.amazon.awscdk.services.ec2.Peer;
+import software.amazon.awscdk.services.ec2.Port;
+import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetConfiguration;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ec2.SubnetType;
@@ -26,9 +30,16 @@ import software.amazon.awscdk.services.ecs.DeploymentCircuitBreaker;
 import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.ecs.FargateTaskDefinition;
 import software.amazon.awscdk.services.ecs.LogDriver;
+import software.amazon.awscdk.services.ecs.LoadBalancerTargetOptions;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
+import software.amazon.awscdk.services.ecs.PortMapping;
 import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
+import software.amazon.awscdk.services.elasticloadbalancingv2.AddApplicationTargetsProps;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationListener;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationLoadBalancer;
+import software.amazon.awscdk.services.elasticloadbalancingv2.BaseApplicationListenerProps;
+import software.amazon.awscdk.services.elasticloadbalancingv2.HealthCheck;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
@@ -62,6 +73,7 @@ public class InfraStack extends Stack {
         String stage = StageConfig.stage(getNode().tryGetContext("stage"));
         String resourcePrefix = StageConfig.resourcePrefix(stage);
         String engineLogGroupName = "prod".equals(stage) ? "/qca/engine" : "/qca/" + stage + "/engine";
+        String fesLogGroupName = "prod".equals(stage) ? "/qca/fes" : "/qca/" + stage + "/fes";
         String scanQueueName = resourcePrefix + "-scan-queue";
         String scanUploadBucketName = resourcePrefix + "-scan-uploads-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
         String scanTableName = resourcePrefix + "-scans";
@@ -89,7 +101,7 @@ public class InfraStack extends Stack {
                 .projectionType(ProjectionType.ALL)
                 .build());
 
-        Table.Builder.create(this, "ScanIdempotencyTable")
+        Table scanIdempotencyTable = Table.Builder.create(this, "ScanIdempotencyTable")
                 .tableName(resourcePrefix + "-scan-idempotency")
                 .partitionKey(Attribute.builder()
                         .name("idempotencyKey")
@@ -152,7 +164,7 @@ public class InfraStack extends Stack {
                         Map.entry("queuedAt", JsonPath.stringAt("$.queuedAt")))))
                 .build();
 
-        StateMachine.Builder.create(this, "ScanStateMachine")
+        StateMachine scanStateMachine = StateMachine.Builder.create(this, "ScanStateMachine")
                 .stateMachineName(resourcePrefix + "-scan-state-machine")
                 .definitionBody(DefinitionBody.fromChainable(sendScanToQueue))
                 .stateMachineType(StateMachineType.STANDARD)
@@ -180,7 +192,19 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        LogGroup fesLogGroup = LogGroup.Builder.create(this, "FesLogGroup")
+                .logGroupName(fesLogGroupName)
+                .retention(RetentionDays.ONE_DAY)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
+                .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
+                        "service-role/AmazonECSTaskExecutionRolePolicy")))
+                .build();
+
+        Role fesExecutionRole = Role.Builder.create(this, "FesTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
                 .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
                         "service-role/AmazonECSTaskExecutionRolePolicy")))
@@ -191,6 +215,17 @@ public class InfraStack extends Stack {
                 .cpu(256)
                 .memoryLimitMiB(512)
                 .executionRole(engineExecutionRole)
+                .runtimePlatform(RuntimePlatform.builder()
+                        .cpuArchitecture(CpuArchitecture.X86_64)
+                        .operatingSystemFamily(OperatingSystemFamily.LINUX)
+                        .build())
+                .build();
+
+        FargateTaskDefinition fesTaskDefinition = FargateTaskDefinition.Builder.create(this, "FesTaskDefinition")
+                .family(resourcePrefix + "-fes")
+                .cpu(512)
+                .memoryLimitMiB(1024)
+                .executionRole(fesExecutionRole)
                 .runtimePlatform(RuntimePlatform.builder()
                         .cpuArchitecture(CpuArchitecture.X86_64)
                         .operatingSystemFamily(OperatingSystemFamily.LINUX)
@@ -223,6 +258,29 @@ public class InfraStack extends Stack {
                         "PROCESSING_SECONDS", "60"))
                 .build());
 
+        scanTable.grantReadWriteData(fesTaskDefinition.getTaskRole());
+        scanIdempotencyTable.grantReadWriteData(fesTaskDefinition.getTaskRole());
+        scanUploadBucket.grantReadWrite(fesTaskDefinition.getTaskRole());
+        scanStateMachine.grantStartExecution(fesTaskDefinition.getTaskRole());
+
+        fesTaskDefinition.addContainer("FesContainer", ContainerDefinitionOptions.builder()
+                .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
+                .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
+                        .logGroup(fesLogGroup)
+                        .streamPrefix("fes")
+                        .build()))
+                .portMappings(List.of(PortMapping.builder()
+                        .containerPort(8080)
+                        .build()))
+                .environment(Map.of(
+                        "AWS_REGION", StageConfig.AWS_REGION,
+                        "QCA_DYNAMODB_SCAN_TABLE_NAME", scanTableName,
+                        "QCA_DYNAMODB_IDEMPOTENCY_TABLE_NAME", scanIdempotencyTable.getTableName(),
+                        "QCA_S3_SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName,
+                        "QCA_STEP_FUNCTIONS_SCAN_STATE_MACHINE_ARN", scanStateMachine.getStateMachineArn(),
+                        "QCA_IDEMPOTENCY_TTL_HOURS", "24"))
+                .build());
+
         FargateService engineService = FargateService.Builder.create(this, "EngineService")
                 .serviceName(resourcePrefix + "-engine-service")
                 .cluster(cluster)
@@ -236,6 +294,68 @@ public class InfraStack extends Stack {
                 .vpcSubnets(SubnetSelection.builder()
                         .subnetType(SubnetType.PUBLIC)
                         .build())
+                .build();
+
+        SecurityGroup fesAlbSecurityGroup = SecurityGroup.Builder.create(this, "FesAlbSecurityGroup")
+                .vpc(vpc)
+                .allowAllOutbound(true)
+                .description("Security group for the public FES load balancer")
+                .build();
+        fesAlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(80), "Allow HTTP");
+
+        SecurityGroup fesServiceSecurityGroup = SecurityGroup.Builder.create(this, "FesServiceSecurityGroup")
+                .vpc(vpc)
+                .allowAllOutbound(true)
+                .description("Security group for the FES ECS service")
+                .build();
+        fesServiceSecurityGroup.addIngressRule(fesAlbSecurityGroup, Port.tcp(8080), "Allow ALB to reach FES");
+
+        FargateService fesService = FargateService.Builder.create(this, "FesService")
+                .serviceName(resourcePrefix + "-fes-service")
+                .cluster(cluster)
+                .taskDefinition(fesTaskDefinition)
+                .desiredCount(0)
+                .assignPublicIp(true)
+                .securityGroups(List.of(fesServiceSecurityGroup))
+                .circuitBreaker(DeploymentCircuitBreaker.builder()
+                        .rollback(true)
+                        .build())
+                .minHealthyPercent(100)
+                .vpcSubnets(SubnetSelection.builder()
+                        .subnetType(SubnetType.PUBLIC)
+                        .build())
+                .build();
+
+        ApplicationLoadBalancer fesLoadBalancer = ApplicationLoadBalancer.Builder.create(this, "FesLoadBalancer")
+                .loadBalancerName(resourcePrefix + "-fes-alb")
+                .vpc(vpc)
+                .internetFacing(true)
+                .securityGroup(fesAlbSecurityGroup)
+                .vpcSubnets(SubnetSelection.builder()
+                        .subnetType(SubnetType.PUBLIC)
+                        .build())
+                .build();
+
+        ApplicationListener fesHttpListener = fesLoadBalancer.addListener("FesHttpListener",
+                BaseApplicationListenerProps.builder()
+                        .port(80)
+                        .open(false)
+                        .build());
+
+        fesHttpListener.addTargets("FesTargets", AddApplicationTargetsProps.builder()
+                .port(8080)
+                .targets(List.of(fesService.loadBalancerTarget(LoadBalancerTargetOptions.builder()
+                        .containerName("FesContainer")
+                        .containerPort(8080)
+                        .build())))
+                .healthCheck(HealthCheck.builder()
+                        .path("/actuator/health")
+                        .healthyHttpCodes("200")
+                        .build())
+                .build());
+
+        CfnOutput.Builder.create(this, "FesAlbDnsName")
+                .value(fesLoadBalancer.getLoadBalancerDnsName())
                 .build();
 
         ScalableTaskCount scaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()

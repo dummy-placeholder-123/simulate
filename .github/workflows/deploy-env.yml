@@ -71,10 +71,14 @@ jobs:
           else
             PREFIX="qca-${DEPLOY_STAGE}"
           fi
+          echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
           echo "ENGINE_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
           echo "ENGINE_SERVICE=${PREFIX}-engine-service" >> ${GITHUB_ENV}
           echo "ENGINE_TASK_FAMILY=${PREFIX}-engine" >> ${GITHUB_ENV}
           echo "ENGINE_CONTAINER=EngineContainer" >> ${GITHUB_ENV}
+          echo "FES_SERVICE=${PREFIX}-fes-service" >> ${GITHUB_ENV}
+          echo "FES_TASK_FAMILY=${PREFIX}-fes" >> ${GITHUB_ENV}
+          echo "FES_CONTAINER=FesContainer" >> ${GITHUB_ENV}
 
       - name: Set engine service desired count to 1
         run: |
@@ -83,11 +87,24 @@ jobs:
             --service ${ENGINE_SERVICE} \
             --desired-count 1
 
+      - name: Set FES service desired count to 1
+        run: |
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${FES_SERVICE} \
+            --desired-count 1
+
       - name: Update worker-service ECS task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition ${ENGINE_TASK_FAMILY} \
             --query taskDefinition > engine-taskdef.json
+
+      - name: Update generic-service ECS task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${FES_TASK_FAMILY} \
+            --query taskDefinition > fes-taskdef.json
 
       - name: Render worker-service task definition
         id: render-engine
@@ -103,4 +120,20 @@ jobs:
           task-definition: ${{ steps.render-engine.outputs.task-definition }}
           cluster: ${{ env.ENGINE_CLUSTER }}
           service: ${{ env.ENGINE_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Render generic-service task definition
+        id: render-fes
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: fes-taskdef.json
+          container-name: ${{ env.FES_CONTAINER }}
+          image: ${{ env.GENERIC_IMAGE }}
+
+      - name: Deploy generic-service ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-fes.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.FES_SERVICE }}
           wait-for-service-stability: true
