@@ -1,4 +1,6 @@
 environment: prod
+release:
+  name: prod-pending
 
 services:
   generic-service:

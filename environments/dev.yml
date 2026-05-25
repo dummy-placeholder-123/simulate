@@ -1,4 +1,6 @@
 environment: dev
+release:
+  name: dev-fes-alb-status
 
 services:
   generic-service:

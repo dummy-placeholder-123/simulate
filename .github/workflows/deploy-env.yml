@@ -1,4 +1,5 @@
 name: Deploy Environment
+run-name: Deploy ${{ inputs.stage }} | ${{ inputs.release_name }}
 
 on:
   workflow_dispatch:
@@ -11,6 +12,10 @@ on:
           - dev
           - qa
           - prod
+      release_name:
+        description: Human-readable release name
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -49,9 +54,19 @@ jobs:
           import os
           import yaml
           stage = os.environ["DEPLOY_STAGE"]
+          input_release_name = os.environ["INPUT_RELEASE_NAME"].strip()
           path = f"environments/{stage}.yml"
           with open(path, "r", encoding="utf-8") as f:
               doc = yaml.safe_load(f)
+          release = doc.get("release") or {}
+          manifest_release_name = (release.get("name") or "").strip()
+          if manifest_release_name and manifest_release_name != input_release_name:
+              raise SystemExit(
+                  f"workflow release_name '{input_release_name}' does not match "
+                  f"manifest release.name '{manifest_release_name}'")
+          release_name = input_release_name or manifest_release_name
+          if not release_name:
+              raise SystemExit("release_name is required")
           gs = doc["services"]["generic-service"]
           ws = doc["services"]["worker-service"]
           ecr_registry = os.environ["ECR_REGISTRY"]
@@ -70,13 +85,29 @@ jobs:
           print(f"GENERIC_IMAGE={generic_image}")
           print(f"WORKER_IMAGE={worker_image}")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
+              out.write(f"RELEASE_NAME={release_name}\n")
               out.write(f"GENERIC_IMAGE={generic_image}\n")
               out.write(f"WORKER_IMAGE={worker_image}\n")
+              out.write(f"GENERIC_TAG={gs['tag']}\n")
+              out.write(f"WORKER_TAG={ws['tag']}\n")
               out.write(f"GENERIC_MIN_CAPACITY={generic_min}\n")
               out.write(f"GENERIC_MAX_CAPACITY={generic_max}\n")
               out.write(f"WORKER_MIN_CAPACITY={worker_min}\n")
               out.write(f"WORKER_MAX_CAPACITY={worker_max}\n")
           PY
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## Deployment"
+            echo ""
+            echo "- Release: ${RELEASE_NAME}"
+            echo "- Stage: ${DEPLOY_STAGE}"
+            echo "- Generic service tag: ${GENERIC_TAG}"
+            echo "- Worker service tag: ${WORKER_TAG}"
+            echo "- Generic scaling: min=${GENERIC_MIN_CAPACITY}, max=${GENERIC_MAX_CAPACITY}"
+            echo "- Worker scaling: min=${WORKER_MIN_CAPACITY}, max=${WORKER_MAX_CAPACITY}"
+          } >> ${GITHUB_STEP_SUMMARY}
 
       - name: Resolve ECS names
         run: |

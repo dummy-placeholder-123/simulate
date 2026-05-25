@@ -1,4 +1,6 @@
 environment: qa
+release:
+  name: qa-pending
 
 services:
   generic-service:
