@@ -1,0 +1,59 @@
+name: Infra CI
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'QCA/infra/**'
+      - '.github/workflows/infra-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'QCA/infra/**'
+      - '.github/workflows/infra-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test And Synth
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/infra
+    env:
+      HOME: /tmp/codex-home
+      JSII_RUNTIME_PACKAGE_CACHE: /tmp/jsii-runtime-cache
+      JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Prepare JSII cache
+        run: |
+          mkdir -p "${HOME}" "${JSII_RUNTIME_PACKAGE_CACHE}"
+
+      - name: Test
+        run: mvn -B test
+
+      - name: Synth
+        run: cdk synth -c stage=dev

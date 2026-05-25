@@ -1,7 +1,18 @@
 name: FES Service CI
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'QCA/fes/**'
+      - '.github/workflows/fes-service-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'QCA/fes/**'
+      - '.github/workflows/fes-service-ci.yml'
 
 permissions:
   contents: read

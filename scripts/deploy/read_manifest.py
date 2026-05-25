@@ -16,16 +16,16 @@ def main() -> int:
         with open(path, "r", encoding="utf-8") as f:
             candidate = yaml.safe_load(f)
         deployment = candidate.get("deployment") or {}
-        if deployment:
+        if deployment.get("selected") is True:
             if manifest_path is not None:
                 raise SystemExit(
-                    f"multiple manifests declare deployment config: '{manifest_path}' and '{path}'"
+                    f"multiple manifests are selected for deployment: '{manifest_path}' and '{path}'"
                 )
             manifest_path = path
             doc = candidate
 
     if manifest_path is None or doc is None:
-        raise SystemExit("exactly one manifest must include a deployment block")
+        raise SystemExit("exactly one manifest must set deployment.selected: true")
 
     manifest_stage = (doc.get("environment") or "").strip()
     if not manifest_stage:

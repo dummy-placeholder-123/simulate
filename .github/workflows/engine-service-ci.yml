@@ -1,7 +1,18 @@
 name: Engine Service CI
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'QCA/engine/**'
+      - '.github/workflows/engine-service-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'QCA/engine/**'
+      - '.github/workflows/engine-service-ci.yml'
 
 permissions:
   contents: read
