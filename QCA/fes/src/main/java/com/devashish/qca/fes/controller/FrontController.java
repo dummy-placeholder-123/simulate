@@ -4,6 +4,7 @@ import com.devashish.qca.fes.dto.ScanFindingsResponse;
 import com.devashish.qca.fes.dto.ScanRequest;
 import com.devashish.qca.fes.dto.ScanListResponse;
 import com.devashish.qca.fes.dto.ScanResponse;
+import com.devashish.qca.fes.dto.ScanStatusResponse;
 import com.devashish.qca.fes.dto.StartScanRequest;
 import com.devashish.qca.fes.dto.StartScanResponse;
 import com.devashish.qca.fes.service.ScanService;
@@ -52,6 +53,11 @@ public class FrontController {
     @GetMapping("/scans/{scanId}/findings")
     public ResponseEntity<ScanFindingsResponse> getScanFindings(@PathVariable String scanId) {
         return ResponseEntity.ok(scanService.getScanFindings(scanId));
+    }
+
+    @GetMapping("/scans/{scanId}/status")
+    public ResponseEntity<ScanStatusResponse> getScanStatus(@PathVariable String scanId) {
+        return ResponseEntity.ok(scanService.getScanStatus(scanId));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

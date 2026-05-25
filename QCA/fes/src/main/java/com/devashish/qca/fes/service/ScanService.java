@@ -4,6 +4,7 @@ import com.devashish.qca.fes.dto.ScanFindingsResponse;
 import com.devashish.qca.fes.dto.ScanListResponse;
 import com.devashish.qca.fes.dto.ScanRequest;
 import com.devashish.qca.fes.dto.ScanResponse;
+import com.devashish.qca.fes.dto.ScanStatusResponse;
 import com.devashish.qca.fes.dto.StartScanRequest;
 import com.devashish.qca.fes.dto.StartScanResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -40,6 +41,7 @@ public class ScanService {
     private static final String WAITING_FOR_UPLOAD = "WAITING_FOR_UPLOAD";
     private static final String QUEUED = "QUEUED";
     private static final String DUPLICATE = "DUPLICATE";
+    private static final String COMPLETED = "COMPLETED";
 
     private final DynamoDbClient dynamoDbClient;
     private final S3Client s3Client;
@@ -176,6 +178,26 @@ public class ScanService {
         } catch (Exception e) {
             throw new IllegalStateException("failed to read scan findings", e);
         }
+    }
+
+    public ScanStatusResponse getScanStatus(String scanId) {
+        if (!hasText(scanId)) {
+            throw new IllegalArgumentException("scanId is required");
+        }
+
+        Map<String, AttributeValue> scanItem = getScanItem(scanId);
+        if (scanItem.isEmpty()) {
+            throw new IllegalArgumentException("scan not found");
+        }
+
+        String status = stringAttribute(scanItem, "status", null);
+        return new ScanStatusResponse(
+                stringAttribute(scanItem, "scanId", null),
+                status,
+                stringAttribute(scanItem, "createdAt", null),
+                stringAttribute(scanItem, "updatedAt", null),
+                stringAttribute(scanItem, "queuedAt", null),
+                COMPLETED.equals(status));
     }
 
     private ScanResponse duplicateResponse(

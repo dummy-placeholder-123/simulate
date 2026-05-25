@@ -2,3 +2,4 @@ target
 .DS_Store
 .vscode
 cdk.out
+alb-requests.http

@@ -33,5 +33,8 @@ Content-Type: application/json
 ### List scans by account
 GET {{baseUrl}}/api/accounts/564061926474/scans?limit=50
 
+### Get scan status
+GET {{baseUrl}}/api/scans/scan-local-001/status
+
 ### Get scan findings
 GET {{baseUrl}}/api/scans/scan-local-001/findings
