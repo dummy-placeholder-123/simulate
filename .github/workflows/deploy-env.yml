@@ -57,11 +57,25 @@ jobs:
           ecr_registry = os.environ["ECR_REGISTRY"]
           generic_image = f"{ecr_registry}/{gs['image']}:{gs['tag']}"
           worker_image = f"{ecr_registry}/{ws['image']}:{ws['tag']}"
+          generic_scaling = gs.get("scaling", {})
+          worker_scaling = ws.get("scaling", {})
+          generic_min = int(generic_scaling.get("minCapacity", 1))
+          generic_max = int(generic_scaling.get("maxCapacity", 5))
+          worker_min = int(worker_scaling.get("minCapacity", 1))
+          worker_max = int(worker_scaling.get("maxCapacity", 5))
+          if generic_min < 0 or worker_min < 0:
+              raise SystemExit("minCapacity must be >= 0")
+          if generic_max < generic_min or worker_max < worker_min:
+              raise SystemExit("maxCapacity must be >= minCapacity")
           print(f"GENERIC_IMAGE={generic_image}")
           print(f"WORKER_IMAGE={worker_image}")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
               out.write(f"GENERIC_IMAGE={generic_image}\n")
               out.write(f"WORKER_IMAGE={worker_image}\n")
+              out.write(f"GENERIC_MIN_CAPACITY={generic_min}\n")
+              out.write(f"GENERIC_MAX_CAPACITY={generic_max}\n")
+              out.write(f"WORKER_MIN_CAPACITY={worker_min}\n")
+              out.write(f"WORKER_MAX_CAPACITY={worker_max}\n")
           PY
 
       - name: Resolve ECS names
@@ -80,19 +94,37 @@ jobs:
           echo "FES_TASK_FAMILY=${PREFIX}-fes" >> ${GITHUB_ENV}
           echo "FES_CONTAINER=FesContainer" >> ${GITHUB_ENV}
 
-      - name: Set engine service desired count to 1
+      - name: Configure engine autoscaling capacity
+        run: |
+          aws application-autoscaling register-scalable-target \
+            --service-namespace ecs \
+            --scalable-dimension ecs:service:DesiredCount \
+            --resource-id service/${ENGINE_CLUSTER}/${ENGINE_SERVICE} \
+            --min-capacity ${WORKER_MIN_CAPACITY} \
+            --max-capacity ${WORKER_MAX_CAPACITY}
+
+      - name: Set engine service desired count to worker min capacity
         run: |
           aws ecs update-service \
             --cluster ${ENGINE_CLUSTER} \
             --service ${ENGINE_SERVICE} \
-            --desired-count 1
+            --desired-count ${WORKER_MIN_CAPACITY}
 
-      - name: Set FES service desired count to 1
+      - name: Configure FES autoscaling capacity
+        run: |
+          aws application-autoscaling register-scalable-target \
+            --service-namespace ecs \
+            --scalable-dimension ecs:service:DesiredCount \
+            --resource-id service/${ECS_CLUSTER}/${FES_SERVICE} \
+            --min-capacity ${GENERIC_MIN_CAPACITY} \
+            --max-capacity ${GENERIC_MAX_CAPACITY}
+
+      - name: Set FES service desired count to generic min capacity
         run: |
           aws ecs update-service \
             --cluster ${ECS_CLUSTER} \
             --service ${FES_SERVICE} \
-            --desired-count 1
+            --desired-count ${GENERIC_MIN_CAPACITY}
 
       - name: Update worker-service ECS task definition
         run: |

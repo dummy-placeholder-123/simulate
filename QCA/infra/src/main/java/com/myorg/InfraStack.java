@@ -25,12 +25,14 @@ import software.amazon.awscdk.services.ecs.AwsLogDriverProps;
 import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
 import software.amazon.awscdk.services.ecs.ContainerImage;
+import software.amazon.awscdk.services.ecs.CpuUtilizationScalingProps;
 import software.amazon.awscdk.services.ecs.CpuArchitecture;
 import software.amazon.awscdk.services.ecs.DeploymentCircuitBreaker;
 import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.ecs.FargateTaskDefinition;
 import software.amazon.awscdk.services.ecs.LogDriver;
 import software.amazon.awscdk.services.ecs.LoadBalancerTargetOptions;
+import software.amazon.awscdk.services.ecs.MemoryUtilizationScalingProps;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
 import software.amazon.awscdk.services.ecs.PortMapping;
 import software.amazon.awscdk.services.ecs.RuntimePlatform;
@@ -358,12 +360,12 @@ public class InfraStack extends Stack {
                 .value(fesLoadBalancer.getLoadBalancerDnsName())
                 .build();
 
-        ScalableTaskCount scaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()
+        ScalableTaskCount engineScaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()
                 .minCapacity(0)
                 .maxCapacity(5)
                 .build());
 
-        scaling.scaleOnMetric("QueueDepthScaling",
+        engineScaling.scaleOnMetric("QueueDepthScaling",
                 software.amazon.awscdk.services.applicationautoscaling.BasicStepScalingPolicyProps.builder()
                         .metric(Metric.Builder.create()
                                 .namespace("AWS/SQS")
@@ -387,6 +389,25 @@ public class InfraStack extends Stack {
                                         .build()))
                         .adjustmentType(software.amazon.awscdk.services.applicationautoscaling.AdjustmentType.CHANGE_IN_CAPACITY)
                         .cooldown(Duration.minutes(1))
+                        .build());
+
+        ScalableTaskCount fesScaling = fesService.autoScaleTaskCount(EnableScalingProps.builder()
+                .minCapacity(0)
+                .maxCapacity(5)
+                .build());
+
+        fesScaling.scaleOnCpuUtilization("FesCpuScaling",
+                CpuUtilizationScalingProps.builder()
+                        .targetUtilizationPercent(60)
+                        .scaleInCooldown(Duration.minutes(2))
+                        .scaleOutCooldown(Duration.minutes(1))
+                        .build());
+
+        fesScaling.scaleOnMemoryUtilization("FesMemoryScaling",
+                MemoryUtilizationScalingProps.builder()
+                        .targetUtilizationPercent(70)
+                        .scaleInCooldown(Duration.minutes(2))
+                        .scaleOutCooldown(Duration.minutes(1))
                         .build());
     }
 }

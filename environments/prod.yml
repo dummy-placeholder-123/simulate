@@ -4,6 +4,12 @@ services:
   generic-service:
     image: qca-fes
     tag: replace-with-commit-sha
+    scaling:
+      minCapacity: 1
+      maxCapacity: 5
   worker-service:
     image: qca-engine
     tag: replace-with-commit-sha
+    scaling:
+      minCapacity: 1
+      maxCapacity: 5
