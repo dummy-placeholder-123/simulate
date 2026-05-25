@@ -17,7 +17,6 @@ import software.amazon.awscdk.services.ec2.SubnetConfiguration;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ec2.SubnetType;
 import software.amazon.awscdk.services.ec2.Vpc;
-import software.amazon.awscdk.services.ecr.CfnRepository;
 import software.amazon.awscdk.services.ecs.AwsLogDriverProps;
 import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
@@ -180,33 +179,6 @@ public class InfraStack extends Stack {
                 .retention(RetentionDays.ONE_DAY)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
-
-        CfnRepository engineRepository = CfnRepository.Builder.create(this, "EngineImageRepository")
-                .repositoryName(resourcePrefix + "-engine")
-                .imageScanningConfiguration(CfnRepository.ImageScanningConfigurationProperty.builder()
-                        .scanOnPush(true)
-                        .build())
-                .lifecyclePolicy(CfnRepository.LifecyclePolicyProperty.builder()
-                        .lifecyclePolicyText("""
-                                {
-                                  "rules": [
-                                    {
-                                      "rulePriority": 1,
-                                      "selection": {
-                                        "tagStatus": "any",
-                                        "countType": "imageCountMoreThan",
-                                        "countNumber": 20
-                                      },
-                                      "action": {
-                                        "type": "expire"
-                                      }
-                                    }
-                                  ]
-                                }
-                                """)
-                        .build())
-                .build();
-        engineRepository.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
         Role engineExecutionRole = Role.Builder.create(this, "EngineTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
