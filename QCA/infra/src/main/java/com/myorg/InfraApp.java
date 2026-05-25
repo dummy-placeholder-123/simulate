@@ -4,13 +4,17 @@ import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
 
-import java.util.Arrays;
-
 public class InfraApp {
     public static void main(final String[] args) {
         App app = new App();
 
-        new InfraStack(app, "InfraStack", StackProps.builder()
+        String stage = (String) app.getNode().tryGetContext("stage");
+        if (stage == null || stage.isBlank()) {
+            stage = "prod";
+        }
+        String stackId = "prod".equals(stage) ? "InfraStack" : "InfraStack-" + stage;
+
+        new InfraStack(app, stackId, StackProps.builder()
                 // If you don't specify 'env', this stack will be environment-agnostic.
                 // Account/Region-dependent features and context lookups will not work,
                 // but a single synthesized template can be deployed anywhere.
@@ -39,4 +43,3 @@ public class InfraApp {
         app.synth();
     }
 }
-

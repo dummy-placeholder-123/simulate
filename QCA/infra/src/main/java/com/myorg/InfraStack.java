@@ -55,6 +55,9 @@ import java.util.Map;
 import java.util.List;
 
 public class InfraStack extends Stack {
+    private static final String AWS_ACCOUNT_ID = "564061926474";
+    private static final String AWS_REGION = "us-east-1";
+
     public InfraStack(final Construct scope, final String id) {
         this(scope, id, null);
     }
@@ -62,8 +65,18 @@ public class InfraStack extends Stack {
     public InfraStack(final Construct scope, final String id, final StackProps props) {
         super(scope, id, props);
 
+        String stage = (String) getNode().tryGetContext("stage");
+        if (stage == null || stage.isBlank()) {
+            stage = "prod";
+        }
+        if (!List.of("dev", "gamma", "prod").contains(stage)) {
+            throw new IllegalArgumentException("stage must be one of: dev, gamma, prod");
+        }
+        String resourcePrefix = "prod".equals(stage) ? "qca" : "qca-" + stage;
+        String engineLogGroupName = "prod".equals(stage) ? "/qca/engine" : "/qca/" + stage + "/engine";
+
         Table scanTable = Table.Builder.create(this, "ScanTable")
-                .tableName("qca-scans")
+                .tableName(resourcePrefix + "-scans")
                 .partitionKey(Attribute.builder()
                         .name("scanId")
                         .type(AttributeType.STRING)
@@ -86,7 +99,7 @@ public class InfraStack extends Stack {
                 .build());
 
         Table.Builder.create(this, "ScanIdempotencyTable")
-                .tableName("qca-scan-idempotency")
+                .tableName(resourcePrefix + "-scan-idempotency")
                 .partitionKey(Attribute.builder()
                         .name("idempotencyKey")
                         .type(AttributeType.STRING)
@@ -97,7 +110,7 @@ public class InfraStack extends Stack {
                 .build();
 
         Bucket scanUploadBucket = Bucket.Builder.create(this, "ScanUploadBucket")
-                .bucketName("qca-scan-uploads-564061926474-us-east-1")
+                .bucketName(resourcePrefix + "-scan-uploads-" + AWS_ACCOUNT_ID + "-" + AWS_REGION)
                 .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
                 .cors(List.of(CorsRule.builder()
                         .allowedMethods(List.of(HttpMethods.PUT))
@@ -111,12 +124,12 @@ public class InfraStack extends Stack {
                 .build();
 
         Queue scanDlq = Queue.Builder.create(this, "ScanDeadLetterQueue")
-                .queueName("qca-scan-dlq")
+                .queueName(resourcePrefix + "-scan-dlq")
                 .retentionPeriod(Duration.days(14))
                 .build();
 
         Queue scanQueue = Queue.Builder.create(this, "ScanQueue")
-                .queueName("qca-scan-queue")
+                .queueName(resourcePrefix + "-scan-queue")
                 .visibilityTimeout(Duration.minutes(6))
                 .retentionPeriod(Duration.days(4))
                 .deadLetterQueue(DeadLetterQueue.builder()
@@ -148,13 +161,13 @@ public class InfraStack extends Stack {
                 .build();
 
         StateMachine.Builder.create(this, "ScanStateMachine")
-                .stateMachineName("qca-scan-state-machine")
+                .stateMachineName(resourcePrefix + "-scan-state-machine")
                 .definitionBody(DefinitionBody.fromChainable(sendScanToQueue))
                 .stateMachineType(StateMachineType.STANDARD)
                 .build();
 
         Vpc vpc = Vpc.Builder.create(this, "WorkerVpc")
-                .vpcName("qca-worker-vpc")
+                .vpcName(resourcePrefix + "-worker-vpc")
                 .maxAzs(2)
                 .natGateways(0)
                 .subnetConfiguration(List.of(SubnetConfiguration.builder()
@@ -165,18 +178,18 @@ public class InfraStack extends Stack {
                 .build();
 
         Cluster cluster = Cluster.Builder.create(this, "WorkerCluster")
-                .clusterName("qca-worker-cluster")
+                .clusterName(resourcePrefix + "-worker-cluster")
                 .vpc(vpc)
                 .build();
 
         LogGroup engineLogGroup = LogGroup.Builder.create(this, "EngineLogGroup")
-                .logGroupName("/qca/engine")
+                .logGroupName(engineLogGroupName)
                 .retention(RetentionDays.ONE_WEEK)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
         CfnRepository engineRepository = CfnRepository.Builder.create(this, "EngineImageRepository")
-                .repositoryName("qca-engine")
+                .repositoryName(resourcePrefix + "-engine")
                 .imageScanningConfiguration(CfnRepository.ImageScanningConfigurationProperty.builder()
                         .scanOnPush(true)
                         .build())
@@ -209,7 +222,7 @@ public class InfraStack extends Stack {
                 .build();
 
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
-                .family("qca-engine")
+                .family(resourcePrefix + "-engine")
                 .cpu(256)
                 .memoryLimitMiB(512)
                 .executionRole(engineExecutionRole)
@@ -237,16 +250,16 @@ public class InfraStack extends Stack {
                         .streamPrefix("engine")
                         .build()))
                 .environment(Map.of(
-                        "AWS_REGION", "us-east-1",
+                        "AWS_REGION", AWS_REGION,
                         "SCAN_QUEUE_URL", scanQueue.getQueueUrl(),
-                        "SCAN_TABLE_NAME", "qca-scans",
+                        "SCAN_TABLE_NAME", resourcePrefix + "-scans",
                         "SCAN_UPLOAD_BUCKET_NAME", scanUploadBucket.getBucketName(),
                         "SCAN_RESULT_BUCKET_NAME", scanUploadBucket.getBucketName(),
                         "PROCESSING_SECONDS", "60"))
                 .build());
 
         FargateService engineService = FargateService.Builder.create(this, "EngineService")
-                .serviceName("qca-engine-service")
+                .serviceName(resourcePrefix + "-engine-service")
                 .cluster(cluster)
                 .taskDefinition(engineTaskDefinition)
                 .desiredCount(0)

@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "QCA/**"
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - "QCA/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  infra:
+    name: Infra Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=dev
+
+  engine:
+    name: Engine Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/engine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
+
+      - name: Package
+        run: mvn -B -DskipTests package
+
+  fes:
+    name: FES Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
