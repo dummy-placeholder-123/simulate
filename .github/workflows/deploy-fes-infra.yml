@@ -1,0 +1,166 @@
+name: Deploy FES Infra
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "QCA/fes-infra/**"
+      - ".github/workflows/deploy-fes-infra.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-fes-infra
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: "564061926474"
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+
+jobs:
+  dev:
+    name: Dev
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_STAGE: dev
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  gamma:
+    name: Gamma
+    runs-on: ubuntu-latest
+    needs: dev
+    environment: gamma
+    env:
+      DEPLOY_STAGE: gamma
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+
+  prod:
+    name: Prod
+    runs-on: ubuntu-latest
+    needs: gamma
+    environment: prod
+    env:
+      DEPLOY_STAGE: prod
+    defaults:
+      run:
+        working-directory: QCA/fes-infra
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Test
+        run: mvn -B test
+
+      - name: CDK synth
+        run: cdk synth -c stage=${DEPLOY_STAGE}
+
+      - name: CDK bootstrap
+        run: cdk bootstrap aws://${{ env.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }}
+
+      - name: CDK deploy
+        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never

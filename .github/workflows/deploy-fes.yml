@@ -1,0 +1,85 @@
+name: Deploy FES
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "QCA/fes/**"
+      - ".github/workflows/deploy-fes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-fes
+  cancel-in-progress: false
+
+jobs:
+  dev:
+    name: Dev
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
+
+  gamma:
+    name: Gamma
+    runs-on: ubuntu-latest
+    needs: dev
+    environment: gamma
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
+
+  prod:
+    name: Prod
+    runs-on: ubuntu-latest
+    needs: gamma
+    environment: prod
+    defaults:
+      run:
+        working-directory: QCA/fes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Test
+        run: mvn -B test
