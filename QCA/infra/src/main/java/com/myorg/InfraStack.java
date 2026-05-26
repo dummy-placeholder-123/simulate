@@ -5,6 +5,15 @@ import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
+import software.amazon.awscdk.services.appconfig.Application;
+import software.amazon.awscdk.services.appconfig.ApplicationProps;
+import software.amazon.awscdk.services.appconfig.ConfigurationContent;
+import software.amazon.awscdk.services.appconfig.ConfigurationType;
+import software.amazon.awscdk.services.appconfig.DeploymentStrategyId;
+import software.amazon.awscdk.services.appconfig.Environment;
+import software.amazon.awscdk.services.appconfig.EnvironmentProps;
+import software.amazon.awscdk.services.appconfig.HostedConfiguration;
+import software.amazon.awscdk.services.appconfig.HostedConfigurationProps;
 import software.amazon.awscdk.services.applicationautoscaling.EnableScalingProps;
 import software.amazon.awscdk.services.cloudwatch.Metric;
 import software.amazon.awscdk.services.dynamodb.Attribute;
@@ -63,6 +72,9 @@ import software.amazon.awscdk.services.s3.Bucket;
 import software.amazon.awscdk.services.s3.BucketEncryption;
 import software.amazon.awscdk.services.s3.CorsRule;
 import software.amazon.awscdk.services.s3.HttpMethods;
+import software.amazon.awscdk.services.secretsmanager.Secret;
+import software.amazon.awscdk.services.secretsmanager.SecretStringGenerator;
+import software.amazon.awscdk.services.ssm.StringParameter;
 import software.amazon.awscdk.services.sqs.DeadLetterQueue;
 import software.amazon.awscdk.services.sqs.Queue;
 import software.amazon.awscdk.services.stepfunctions.DefinitionBody;
@@ -89,6 +101,7 @@ public class InfraStack extends Stack {
         String scanQueueName = resourcePrefix + "-scan-queue";
         String scanUploadBucketName = resourcePrefix + "-scan-uploads-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
         String scanTableName = resourcePrefix + "-scans";
+        String fesConfigPathPrefix = "/qca/" + stage + "/fes";
         boolean isProd = "prod".equals(stage);
         int engineDesiredCount = isProd ? 1 : 0;
         int engineMinCapacity = isProd ? 1 : 0;
@@ -187,6 +200,52 @@ public class InfraStack extends Stack {
                 .stateMachineType(StateMachineType.STANDARD)
                 .build();
 
+        Secret fesApiKeySecret = Secret.Builder.create(this, "FesApiKeySecret")
+                .secretName(fesConfigPathPrefix + "/api-key")
+                .description("Shared API key required for mutating FES endpoints")
+                .generateSecretString(SecretStringGenerator.builder()
+                        .excludePunctuation(true)
+                        .passwordLength(32)
+                        .build())
+                .build();
+
+        StringParameter fesPresignedUrlDurationParameter = StringParameter.Builder.create(this, "FesPresignedUrlDurationParameter")
+                .parameterName(fesConfigPathPrefix + "/presigned-url-duration-minutes")
+                .description("Presigned upload URL duration for FES, in minutes")
+                .stringValue("5")
+                .build();
+
+        Application fesAppConfigApplication = new Application(this, "FesAppConfigApplication",
+                ApplicationProps.builder()
+                        .applicationName(resourcePrefix + "-fes-config")
+                        .description("Runtime feature flags for FES")
+                        .build());
+
+        Environment fesAppConfigEnvironment = new Environment(this, "FesAppConfigEnvironment",
+                EnvironmentProps.builder()
+                        .application(fesAppConfigApplication)
+                        .environmentName(stage)
+                        .description("FES runtime flags for " + stage)
+                        .build());
+
+        HostedConfiguration fesAppConfigHostedConfiguration = new HostedConfiguration(this, "FesAppConfigHostedConfiguration",
+                HostedConfigurationProps.builder()
+                        .application(fesAppConfigApplication)
+                        .deployTo(List.of(fesAppConfigEnvironment))
+                        .deploymentStrategy(software.amazon.awscdk.services.appconfig.DeploymentStrategy
+                                .fromDeploymentStrategyId(this, "FesAppConfigAllAtOnce", DeploymentStrategyId.ALL_AT_ONCE))
+                        .name(resourcePrefix + "-fes-flags")
+                        .description("Feature flags for create-scan and start-scan")
+                        .type(ConfigurationType.FREEFORM)
+                        .content(ConfigurationContent.fromInlineJson("""
+                                {
+                                  "enableCreateScan": true,
+                                  "enableStartScan": true
+                                }
+                                """))
+                        .versionLabel("v1")
+                        .build());
+
         Vpc vpc = Vpc.Builder.create(this, "WorkerVpc")
                 .vpcName(resourcePrefix + "-worker-vpc")
                 .maxAzs(2)
@@ -226,6 +285,9 @@ public class InfraStack extends Stack {
                 .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
                         "service-role/AmazonECSTaskExecutionRolePolicy")))
                 .build();
+
+        fesApiKeySecret.grantRead(fesExecutionRole);
+        fesPresignedUrlDurationParameter.grantRead(fesExecutionRole);
 
         Role fesBlueGreenInfrastructureRole = Role.Builder.create(this, "FesBlueGreenInfrastructureRole")
                 .assumedBy(new ServicePrincipal("ecs.amazonaws.com"))
@@ -285,6 +347,12 @@ public class InfraStack extends Stack {
         scanIdempotencyTable.grantReadWriteData(fesTaskDefinition.getTaskRole());
         scanUploadBucket.grantReadWrite(fesTaskDefinition.getTaskRole());
         scanStateMachine.grantStartExecution(fesTaskDefinition.getTaskRole());
+        fesTaskDefinition.getTaskRole().addToPrincipalPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "appconfigdata:StartConfigurationSession",
+                        "appconfigdata:GetLatestConfiguration"))
+                .resources(List.of("*"))
+                .build());
 
         fesTaskDefinition.addContainer("FesContainer", ContainerDefinitionOptions.builder()
                 .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
@@ -301,7 +369,14 @@ public class InfraStack extends Stack {
                         "QCA_DYNAMODB_IDEMPOTENCY_TABLE_NAME", scanIdempotencyTable.getTableName(),
                         "QCA_S3_SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName,
                         "QCA_STEP_FUNCTIONS_SCAN_STATE_MACHINE_ARN", scanStateMachine.getStateMachineArn(),
-                        "QCA_IDEMPOTENCY_TTL_HOURS", "24"))
+                        "QCA_IDEMPOTENCY_TTL_HOURS", "24",
+                        "QCA_APPCONFIG_APPLICATION_ID", fesAppConfigApplication.getApplicationId(),
+                        "QCA_APPCONFIG_ENVIRONMENT_ID", fesAppConfigEnvironment.getEnvironmentId(),
+                        "QCA_APPCONFIG_PROFILE_ID", fesAppConfigHostedConfiguration.getConfigurationProfileId(),
+                        "QCA_APPCONFIG_POLL_SECONDS", "30"))
+                .secrets(Map.of(
+                        "QCA_FES_API_KEY", software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(fesApiKeySecret),
+                        "QCA_S3_PRESIGNED_URL_DURATION_MINUTES", software.amazon.awscdk.services.ecs.Secret.fromSsmParameter(fesPresignedUrlDurationParameter)))
                 .build());
 
         FargateService engineService = FargateService.Builder.create(this, "EngineService")
@@ -434,6 +509,26 @@ public class InfraStack extends Stack {
 
         CfnOutput.Builder.create(this, "FesAlbGreenTestUrl")
                 .value("http://" + fesLoadBalancer.getLoadBalancerDnsName() + ":9000")
+                .build();
+
+        CfnOutput.Builder.create(this, "FesApiKeySecretName")
+                .value(fesApiKeySecret.getSecretName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesPresignedUrlDurationParameterName")
+                .value(fesPresignedUrlDurationParameter.getParameterName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesAppConfigApplicationId")
+                .value(fesAppConfigApplication.getApplicationId())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesAppConfigEnvironmentId")
+                .value(fesAppConfigEnvironment.getEnvironmentId())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesAppConfigProfileId")
+                .value(fesAppConfigHostedConfiguration.getConfigurationProfileId())
                 .build();
 
         ScalableTaskCount engineScaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()

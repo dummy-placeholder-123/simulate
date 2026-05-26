@@ -10,8 +10,15 @@ qca:
     idempotency-table-name: ${QCA_DYNAMODB_IDEMPOTENCY_TABLE_NAME:qca-scan-idempotency}
   s3:
     scan-upload-bucket-name: ${QCA_S3_SCAN_UPLOAD_BUCKET_NAME:qca-scan-uploads-564061926474-us-east-1}
-    presigned-url-duration-minutes: 5
+    presigned-url-duration-minutes: ${QCA_S3_PRESIGNED_URL_DURATION_MINUTES:5}
   step-functions:
     scan-state-machine-arn: ${QCA_STEP_FUNCTIONS_SCAN_STATE_MACHINE_ARN:arn:aws:states:${qca.aws.region}:564061926474:stateMachine:qca-scan-state-machine}
   idempotency:
     ttl-hours: ${QCA_IDEMPOTENCY_TTL_HOURS:24}
+  security:
+    api-key: ${QCA_FES_API_KEY:local-dev-api-key}
+  appconfig:
+    application-id: ${QCA_APPCONFIG_APPLICATION_ID:}
+    environment-id: ${QCA_APPCONFIG_ENVIRONMENT_ID:}
+    profile-id: ${QCA_APPCONFIG_PROFILE_ID:}
+    poll-seconds: ${QCA_APPCONFIG_POLL_SECONDS:30}

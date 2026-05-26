@@ -54,6 +54,11 @@
 			<artifactId>sfn</artifactId>
 			<version>${aws.sdk.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>appconfigdata</artifactId>
+			<version>${aws.sdk.version}</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

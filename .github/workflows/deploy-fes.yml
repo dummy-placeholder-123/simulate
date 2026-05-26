@@ -1,8 +1,12 @@
 name: Deploy FES
-run-name: FES Release From Manifest
+run-name: FES Release From Environment Manifests
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'environments/*/fes.yml'
 
 permissions:
   contents: read
@@ -15,11 +19,13 @@ env:
 
 jobs:
   deploy:
-    name: Deploy FES From Manifest
+    name: Deploy FES From Changed Manifests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -32,31 +38,62 @@ jobs:
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
 
-      - name: Read manifest
-        run: python3 scripts/deploy/read_manifest.py
+      - name: Resolve changed FES manifest
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          ZERO_SHA=0000000000000000000000000000000000000000
+          if [ "${BEFORE_SHA}" = "${ZERO_SHA}" ]; then
+            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'environments/*/fes.yml')
+          else
+            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'environments/*/fes.yml')
+          fi
+
+          if [ "${#CHANGED_MANIFESTS[@]}" -eq 0 ]; then
+            echo "No changed FES manifest found." >&2
+            exit 1
+          fi
+
+          if [ "${#CHANGED_MANIFESTS[@]}" -gt 1 ]; then
+            printf 'Only one FES env manifest change is allowed per push.\nChanged files:\n%s\n' "${CHANGED_MANIFESTS[@]}" >&2
+            exit 1
+          fi
+
+          echo "MANIFEST_PATH=${CHANGED_MANIFESTS[0]}" >> "${GITHUB_ENV}"
+
+      - name: Read service manifest
+        run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"
 
       - name: Write deployment summary
         run: |
           {
             echo "## FES Deployment"
             echo ""
+            echo "- Manifest: ${MANIFEST_PATH}"
             echo "- Operation: ${DEPLOY_OPERATION}"
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
-            echo "- Generic service tag: ${GENERIC_TAG}"
-            echo "- Non-prod bootstrap desired count: 1"
-          } >> ${GITHUB_STEP_SUMMARY}
+            echo "- Tag: ${DEPLOY_TAG}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Skip deploy on push-only
+        if: ${{ env.DEPLOY_OPERATION != 'deploy' }}
+        run: |
+          echo "- Skipped: push-only" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Resolve FES image URI
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
         run: |
-          echo "GENERIC_IMAGE=${ECR_REGISTRY}/${FES_REPOSITORY}:${GENERIC_TAG}" >> ${GITHUB_ENV}
+          echo "IMAGE_URI=${ECR_REGISTRY}/${FES_REPOSITORY}:${DEPLOY_TAG}" >> ${GITHUB_ENV}
 
-      - name: Validate generic-service image exists
+      - name: Validate FES image exists
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
         run: |
           aws ecr describe-images \
-            --repository-name ${FES_REPOSITORY} \
-            --image-ids imageTag=${GENERIC_TAG} >/dev/null
+            --repository-name "${FES_REPOSITORY}" \
+            --image-ids imageTag="${DEPLOY_TAG}" >/dev/null
 
       - name: Resolve ECS names
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
@@ -69,16 +106,15 @@ jobs:
           echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> ${GITHUB_ENV}
           echo "FES_SERVICE=${PREFIX}-fes-service" >> ${GITHUB_ENV}
           echo "FES_TASK_FAMILY=${PREFIX}-fes" >> ${GITHUB_ENV}
-          echo "FES_CONTAINER=FesContainer" >> ${GITHUB_ENV}
 
-      - name: Deploy generic-service ECS service
+      - name: Deploy FES ECS service
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
         run: |
           bash scripts/deploy/deploy_ecs.sh \
-            ${ECS_CLUSTER} \
-            ${FES_SERVICE} \
-            ${FES_TASK_FAMILY} \
-            ${FES_CONTAINER} \
-            ${GENERIC_IMAGE} \
-            ${DEPLOY_STAGE} \
+            "${ECS_CLUSTER}" \
+            "${FES_SERVICE}" \
+            "${FES_TASK_FAMILY}" \
+            FesContainer \
+            "${IMAGE_URI}" \
+            "${DEPLOY_STAGE}" \
             fes

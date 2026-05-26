@@ -1,10 +1,12 @@
 @baseUrl = http://localhost:8080
+@apiKey = local-dev-api-key
 @uploadUrl = paste-presigned-upload-url-here
 @uploadFile = ./amazon-q-detectors-main.zip
 
 ### Create GitHub PR scan
 POST {{baseUrl}}/api/create-scan
 Content-Type: application/json
+X-API-Key: {{apiKey}}
 
 {
   "scanId": "scan-local-001",
@@ -25,6 +27,7 @@ Content-Type: application/octet-stream
 ### Start scan processing
 POST {{baseUrl}}/api/start-scan
 Content-Type: application/json
+X-API-Key: {{apiKey}}
 
 {
   "scanId": "scan-local-001"
