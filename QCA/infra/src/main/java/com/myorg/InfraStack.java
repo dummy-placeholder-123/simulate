@@ -230,7 +230,7 @@ public class InfraStack extends Stack {
         Role fesBlueGreenInfrastructureRole = Role.Builder.create(this, "FesBlueGreenInfrastructureRole")
                 .assumedBy(new ServicePrincipal("ecs.amazonaws.com"))
                 .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
-                        "service-role/AmazonECSInfrastructureRolePolicyForLoadBalancers")))
+                        "AmazonECSInfrastructureRolePolicyForLoadBalancers")))
                 .build();
 
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
