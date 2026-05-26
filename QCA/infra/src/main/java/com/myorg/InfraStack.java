@@ -27,6 +27,7 @@ import software.amazon.awscdk.services.ecs.ContainerDefinitionOptions;
 import software.amazon.awscdk.services.ecs.ContainerImage;
 import software.amazon.awscdk.services.ecs.CpuUtilizationScalingProps;
 import software.amazon.awscdk.services.ecs.CpuArchitecture;
+import software.amazon.awscdk.services.ecs.CfnService;
 import software.amazon.awscdk.services.ecs.DeploymentCircuitBreaker;
 import software.amazon.awscdk.services.ecs.DeploymentStrategy;
 import software.amazon.awscdk.services.ecs.FargateService;
@@ -40,9 +41,17 @@ import software.amazon.awscdk.services.ecs.RuntimePlatform;
 import software.amazon.awscdk.services.ecs.ScalableTaskCount;
 import software.amazon.awscdk.services.elasticloadbalancingv2.AddApplicationTargetsProps;
 import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationListener;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationListenerRule;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationListenerRuleProps;
 import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationLoadBalancer;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationProtocol;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationTargetGroup;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ApplicationTargetGroupProps;
 import software.amazon.awscdk.services.elasticloadbalancingv2.BaseApplicationListenerProps;
 import software.amazon.awscdk.services.elasticloadbalancingv2.HealthCheck;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ListenerAction;
+import software.amazon.awscdk.services.elasticloadbalancingv2.ListenerCondition;
+import software.amazon.awscdk.services.elasticloadbalancingv2.TargetType;
 import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
@@ -218,6 +227,12 @@ public class InfraStack extends Stack {
                         "service-role/AmazonECSTaskExecutionRolePolicy")))
                 .build();
 
+        Role fesBlueGreenInfrastructureRole = Role.Builder.create(this, "FesBlueGreenInfrastructureRole")
+                .assumedBy(new ServicePrincipal("ecs.amazonaws.com"))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
+                        "service-role/AmazonECSInfrastructureRolePolicyForLoadBalancers")))
+                .build();
+
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
                 .family(resourcePrefix + "-engine")
                 .cpu(256)
@@ -310,6 +325,7 @@ public class InfraStack extends Stack {
                 .description("Security group for the public FES load balancer")
                 .build();
         fesAlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(80), "Allow HTTP");
+        fesAlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(9000), "Allow FES green test traffic");
 
         SecurityGroup fesServiceSecurityGroup = SecurityGroup.Builder.create(this, "FesServiceSecurityGroup")
                 .vpc(vpc)
@@ -346,23 +362,78 @@ public class InfraStack extends Stack {
         ApplicationListener fesHttpListener = fesLoadBalancer.addListener("FesHttpListener",
                 BaseApplicationListenerProps.builder()
                         .port(80)
+                        .defaultAction(ListenerAction.fixedResponse(404))
+                        .protocol(ApplicationProtocol.HTTP)
                         .open(false)
                         .build());
 
-        fesHttpListener.addTargets("FesTargets", AddApplicationTargetsProps.builder()
-                .port(8080)
-                .targets(List.of(fesService.loadBalancerTarget(LoadBalancerTargetOptions.builder()
-                        .containerName("FesContainer")
-                        .containerPort(8080)
-                        .build())))
-                .healthCheck(HealthCheck.builder()
-                        .path("/actuator/health")
-                        .healthyHttpCodes("200")
+        ApplicationListener fesTestListener = fesLoadBalancer.addListener("FesTestListener",
+                BaseApplicationListenerProps.builder()
+                        .port(9000)
+                        .defaultAction(ListenerAction.fixedResponse(404))
+                        .protocol(ApplicationProtocol.HTTP)
+                        .open(false)
+                        .build());
+
+        ApplicationTargetGroup fesBlueTargetGroup = new ApplicationTargetGroup(this, "FesBlueTargetGroup",
+                ApplicationTargetGroupProps.builder()
+                        .vpc(vpc)
+                        .port(8080)
+                        .protocol(ApplicationProtocol.HTTP)
+                        .targetType(TargetType.IP)
+                        .healthCheck(HealthCheck.builder()
+                                .path("/actuator/health")
+                                .healthyHttpCodes("200")
+                                .build())
+                        .build());
+
+        ApplicationTargetGroup fesGreenTargetGroup = new ApplicationTargetGroup(this, "FesGreenTargetGroup",
+                ApplicationTargetGroupProps.builder()
+                        .vpc(vpc)
+                        .port(8080)
+                        .protocol(ApplicationProtocol.HTTP)
+                        .targetType(TargetType.IP)
+                        .healthCheck(HealthCheck.builder()
+                                .path("/actuator/health")
+                                .healthyHttpCodes("200")
+                                .build())
+                        .build());
+
+        ApplicationListenerRule fesProductionRule = new ApplicationListenerRule(this, "FesProductionRule",
+                ApplicationListenerRuleProps.builder()
+                        .listener(fesHttpListener)
+                        .priority(100)
+                        .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
+                        .action(ListenerAction.forward(List.of(fesBlueTargetGroup)))
+                        .build());
+
+        ApplicationListenerRule fesTestRule = new ApplicationListenerRule(this, "FesTestRule",
+                ApplicationListenerRuleProps.builder()
+                        .listener(fesTestListener)
+                        .priority(100)
+                        .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
+                        .action(ListenerAction.forward(List.of(fesGreenTargetGroup)))
+                        .build());
+
+        CfnService fesServiceResource = (CfnService) fesService.getNode().getDefaultChild();
+        fesServiceResource.setLoadBalancers(List.of(CfnService.LoadBalancerProperty.builder()
+                .containerName("FesContainer")
+                .containerPort(8080)
+                .targetGroupArn(fesBlueTargetGroup.getTargetGroupArn())
+                .advancedConfiguration(CfnService.AdvancedConfigurationProperty.builder()
+                        .alternateTargetGroupArn(fesGreenTargetGroup.getTargetGroupArn())
+                        .productionListenerRule(fesProductionRule.getListenerRuleArn())
+                        .testListenerRule(fesTestRule.getListenerRuleArn())
+                        .roleArn(fesBlueGreenInfrastructureRole.getRoleArn())
                         .build())
-                .build());
+                .build()));
 
         CfnOutput.Builder.create(this, "FesAlbDnsName")
                 .value(fesLoadBalancer.getLoadBalancerDnsName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesAlbGreenTestUrl")
+                .value("http://" + fesLoadBalancer.getLoadBalancerDnsName() + ":9000")
                 .build();
 
         ScalableTaskCount engineScaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()
