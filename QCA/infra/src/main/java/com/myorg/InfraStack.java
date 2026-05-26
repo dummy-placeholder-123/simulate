@@ -80,6 +80,11 @@ public class InfraStack extends Stack {
         String scanQueueName = resourcePrefix + "-scan-queue";
         String scanUploadBucketName = resourcePrefix + "-scan-uploads-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
         String scanTableName = resourcePrefix + "-scans";
+        boolean isProd = "prod".equals(stage);
+        int engineDesiredCount = isProd ? 1 : 0;
+        int engineMinCapacity = isProd ? 1 : 0;
+        int fesDesiredCount = isProd ? 2 : 0;
+        int fesMinCapacity = isProd ? 2 : 0;
 
         Table scanTable = Table.Builder.create(this, "ScanTable")
                 .tableName(scanTableName)
@@ -288,7 +293,7 @@ public class InfraStack extends Stack {
                 .serviceName(resourcePrefix + "-engine-service")
                 .cluster(cluster)
                 .taskDefinition(engineTaskDefinition)
-                .desiredCount(0)
+                .desiredCount(engineDesiredCount)
                 .assignPublicIp(true)
                 .circuitBreaker(DeploymentCircuitBreaker.builder()
                         .rollback(true)
@@ -319,7 +324,7 @@ public class InfraStack extends Stack {
                 .taskDefinition(fesTaskDefinition)
                 .deploymentStrategy(DeploymentStrategy.BLUE_GREEN)
                 .bakeTime(Duration.minutes(5))
-                .desiredCount(0)
+                .desiredCount(fesDesiredCount)
                 .assignPublicIp(true)
                 .securityGroups(List.of(fesServiceSecurityGroup))
                 .minHealthyPercent(100)
@@ -361,7 +366,7 @@ public class InfraStack extends Stack {
                 .build();
 
         ScalableTaskCount engineScaling = engineService.autoScaleTaskCount(EnableScalingProps.builder()
-                .minCapacity(0)
+                .minCapacity(engineMinCapacity)
                 .maxCapacity(5)
                 .build());
 
@@ -392,7 +397,7 @@ public class InfraStack extends Stack {
                         .build());
 
         ScalableTaskCount fesScaling = fesService.autoScaleTaskCount(EnableScalingProps.builder()
-                .minCapacity(0)
+                .minCapacity(fesMinCapacity)
                 .maxCapacity(5)
                 .build());
 

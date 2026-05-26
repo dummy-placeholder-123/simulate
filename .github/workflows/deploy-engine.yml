@@ -43,7 +43,7 @@ jobs:
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
             echo "- Worker service tag: ${WORKER_TAG}"
-            echo "- Worker scaling: min=${WORKER_MIN_CAPACITY}, max=${WORKER_MAX_CAPACITY}"
+            echo "- Non-prod bootstrap desired count: ${WORKER_MIN_CAPACITY}"
           } >> ${GITHUB_STEP_SUMMARY}
 
       - name: Login to Amazon ECR
@@ -79,6 +79,6 @@ jobs:
             ${ENGINE_TASK_FAMILY} \
             ${ENGINE_CONTAINER} \
             ${WORKER_IMAGE} \
+            ${DEPLOY_STAGE} \
             ${WORKER_MIN_CAPACITY} \
-            ${WORKER_MAX_CAPACITY} \
             engine

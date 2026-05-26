@@ -6,21 +6,18 @@ SERVICE="$2"
 TASK_FAMILY="$3"
 CONTAINER_NAME="$4"
 IMAGE_URI="$5"
-MIN_CAPACITY="$6"
-MAX_CAPACITY="$7"
+DEPLOY_STAGE="$6"
+BOOTSTRAP_DESIRED_COUNT="$7"
 ARTIFACT_PREFIX="$8"
 
-aws application-autoscaling register-scalable-target \
-  --service-namespace ecs \
-  --scalable-dimension ecs:service:DesiredCount \
-  --resource-id "service/${CLUSTER}/${SERVICE}" \
-  --min-capacity "${MIN_CAPACITY}" \
-  --max-capacity "${MAX_CAPACITY}"
-
-aws ecs update-service \
-  --cluster "${CLUSTER}" \
-  --service "${SERVICE}" \
-  --desired-count "${MIN_CAPACITY}" >/dev/null
+# Infra owns steady-state scaling. For non-prod, keep a lightweight bootstrap so
+# a service created at 0 can come up when an image is first deployed.
+if [ "${DEPLOY_STAGE}" != "prod" ] && [ "${BOOTSTRAP_DESIRED_COUNT}" -gt 0 ]; then
+  aws ecs update-service \
+    --cluster "${CLUSTER}" \
+    --service "${SERVICE}" \
+    --desired-count "${BOOTSTRAP_DESIRED_COUNT}" >/dev/null
+fi
 
 aws ecs describe-task-definition \
   --task-definition "${TASK_FAMILY}" \

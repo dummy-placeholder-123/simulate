@@ -10,7 +10,7 @@ services:
     image: qca-fes
     tag: replace-with-agreed-deploy-tag
     scaling:
-      minCapacity: 1
+      minCapacity: 2
   worker-service:
     image: qca-engine
     tag: replace-with-agreed-deploy-tag
