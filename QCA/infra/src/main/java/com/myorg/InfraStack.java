@@ -28,6 +28,7 @@ import software.amazon.awscdk.services.ecs.ContainerImage;
 import software.amazon.awscdk.services.ecs.CpuUtilizationScalingProps;
 import software.amazon.awscdk.services.ecs.CpuArchitecture;
 import software.amazon.awscdk.services.ecs.DeploymentCircuitBreaker;
+import software.amazon.awscdk.services.ecs.DeploymentStrategy;
 import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.ecs.FargateTaskDefinition;
 import software.amazon.awscdk.services.ecs.LogDriver;
@@ -316,12 +317,11 @@ public class InfraStack extends Stack {
                 .serviceName(resourcePrefix + "-fes-service")
                 .cluster(cluster)
                 .taskDefinition(fesTaskDefinition)
+                .deploymentStrategy(DeploymentStrategy.BLUE_GREEN)
+                .bakeTime(Duration.minutes(5))
                 .desiredCount(0)
                 .assignPublicIp(true)
                 .securityGroups(List.of(fesServiceSecurityGroup))
-                .circuitBreaker(DeploymentCircuitBreaker.builder()
-                        .rollback(true)
-                        .build())
                 .minHealthyPercent(100)
                 .vpcSubnets(SubnetSelection.builder()
                         .subnetType(SubnetType.PUBLIC)
