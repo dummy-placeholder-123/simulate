@@ -8,7 +8,6 @@ import yaml
 
 
 def main() -> int:
-    ecr_registry = os.environ["ECR_REGISTRY"]
     manifest_path = None
     doc = None
 
@@ -51,21 +50,10 @@ def main() -> int:
         if not tag_pattern.match(svc["tag"]):
             raise SystemExit(f"{label} tag '{svc['tag']}' contains invalid characters")
 
-    for label, svc in (
-        ("generic-service", generic_service),
-        ("worker-service", worker_service),
-    ):
-        if not (svc.get("repo") or "").strip():
-            raise SystemExit(f"{label} repo is required")
-
     with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
         out.write(f"DEPLOY_STAGE={manifest_stage}\n")
         out.write(f"DEPLOY_OPERATION={deploy_operation}\n")
         out.write(f"RELEASE_NAME={release_name}\n")
-        out.write(f"GENERIC_REPOSITORY={generic_service['repo']}\n")
-        out.write(f"WORKER_REPOSITORY={worker_service['repo']}\n")
-        out.write(f"GENERIC_IMAGE={ecr_registry}/{generic_service['repo']}:{generic_service['tag']}\n")
-        out.write(f"WORKER_IMAGE={ecr_registry}/{worker_service['repo']}:{worker_service['tag']}\n")
         out.write(f"GENERIC_TAG={generic_service['tag']}\n")
         out.write(f"WORKER_TAG={worker_service['tag']}\n")
 

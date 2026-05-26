@@ -11,6 +11,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+  FES_REPOSITORY: qca-fes
 
 jobs:
   deploy:
@@ -46,16 +47,16 @@ jobs:
             echo "- Non-prod bootstrap desired count: 1"
           } >> ${GITHUB_STEP_SUMMARY}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Resolve image stamp tags
+      - name: Resolve FES image URI
         run: |
-          echo "SHA_TAG=${GITHUB_SHA}" >> ${GITHUB_ENV}
-          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> ${GITHUB_ENV}
+          echo "GENERIC_IMAGE=${ECR_REGISTRY}/${FES_REPOSITORY}:${GENERIC_TAG}" >> ${GITHUB_ENV}
 
-      - name: Build and push generic-service image
-        run: bash scripts/deploy/build_and_push.sh QCA/fes ${GENERIC_REPOSITORY} ${GENERIC_TAG}
+      - name: Validate generic-service image exists
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          aws ecr describe-images \
+            --repository-name ${FES_REPOSITORY} \
+            --image-ids imageTag=${GENERIC_TAG} >/dev/null
 
       - name: Resolve ECS names
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}

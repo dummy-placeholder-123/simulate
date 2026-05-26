@@ -1,0 +1,4 @@
+repo: qca-engine
+service-dir: QCA/engine
+release-label: engine
+stable-tag: latest

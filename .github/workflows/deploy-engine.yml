@@ -11,6 +11,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+  ENGINE_REPOSITORY: qca-engine
 
 jobs:
   deploy:
@@ -46,16 +47,16 @@ jobs:
             echo "- Non-prod bootstrap desired count: 1"
           } >> ${GITHUB_STEP_SUMMARY}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Resolve image stamp tags
+      - name: Resolve engine image URI
         run: |
-          echo "SHA_TAG=${GITHUB_SHA}" >> ${GITHUB_ENV}
-          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> ${GITHUB_ENV}
+          echo "WORKER_IMAGE=${ECR_REGISTRY}/${ENGINE_REPOSITORY}:${WORKER_TAG}" >> ${GITHUB_ENV}
 
-      - name: Build and push worker-service image
-        run: bash scripts/deploy/build_and_push.sh QCA/engine ${WORKER_REPOSITORY} ${WORKER_TAG}
+      - name: Validate worker-service image exists
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          aws ecr describe-images \
+            --repository-name ${ENGINE_REPOSITORY} \
+            --image-ids imageTag=${WORKER_TAG} >/dev/null
 
       - name: Resolve ECS names
         if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
