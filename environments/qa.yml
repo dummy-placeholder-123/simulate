@@ -1,18 +1,15 @@
 # deployment.selected = exactly one file should be true
 # deployment.operation = deploy or push-only
 # release-name = human-readable deployment label
+# services.*.repo = ECR repository name
 # services.*.tag = agreed deploy tag; workflow also pushes sha and date tags
 environment: qa
 release-name: qa-pending
 
 services:
   generic-service:
-    image: qca-fes
+    repo: qca-fes
     tag: replace-with-agreed-deploy-tag
-    scaling:
-      minCapacity: 1
   worker-service:
-    image: qca-engine
+    repo: qca-engine
     tag: replace-with-agreed-deploy-tag
-    scaling:
-      minCapacity: 1

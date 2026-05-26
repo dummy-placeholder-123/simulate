@@ -7,16 +7,15 @@ TASK_FAMILY="$3"
 CONTAINER_NAME="$4"
 IMAGE_URI="$5"
 DEPLOY_STAGE="$6"
-BOOTSTRAP_DESIRED_COUNT="$7"
-ARTIFACT_PREFIX="$8"
+ARTIFACT_PREFIX="$7"
 
 # Infra owns steady-state scaling. For non-prod, keep a lightweight bootstrap so
 # a service created at 0 can come up when an image is first deployed.
-if [ "${DEPLOY_STAGE}" != "prod" ] && [ "${BOOTSTRAP_DESIRED_COUNT}" -gt 0 ]; then
+if [ "${DEPLOY_STAGE}" != "prod" ]; then
   aws ecs update-service \
     --cluster "${CLUSTER}" \
     --service "${SERVICE}" \
-    --desired-count "${BOOTSTRAP_DESIRED_COUNT}" >/dev/null
+    --desired-count 1 >/dev/null
 fi
 
 aws ecs describe-task-definition \

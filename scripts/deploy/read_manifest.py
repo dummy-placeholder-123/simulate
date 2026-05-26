@@ -51,33 +51,23 @@ def main() -> int:
         if not tag_pattern.match(svc["tag"]):
             raise SystemExit(f"{label} tag '{svc['tag']}' contains invalid characters")
 
-    generic_scaling = generic_service.get("scaling", {})
-    worker_scaling = worker_service.get("scaling", {})
-
-    generic_min = int(generic_scaling.get("minCapacity", 1))
-    generic_max = int(generic_scaling.get("maxCapacity", 5))
-    worker_min = int(worker_scaling.get("minCapacity", 1))
-    worker_max = int(worker_scaling.get("maxCapacity", 5))
-
-    if generic_min < 0 or worker_min < 0:
-        raise SystemExit("minCapacity must be >= 0")
-    if generic_max < generic_min or worker_max < worker_min:
-        raise SystemExit("maxCapacity must be >= minCapacity")
+    for label, svc in (
+        ("generic-service", generic_service),
+        ("worker-service", worker_service),
+    ):
+        if not (svc.get("repo") or "").strip():
+            raise SystemExit(f"{label} repo is required")
 
     with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
         out.write(f"DEPLOY_STAGE={manifest_stage}\n")
         out.write(f"DEPLOY_OPERATION={deploy_operation}\n")
         out.write(f"RELEASE_NAME={release_name}\n")
-        out.write(f"GENERIC_REPOSITORY={generic_service['image']}\n")
-        out.write(f"WORKER_REPOSITORY={worker_service['image']}\n")
-        out.write(f"GENERIC_IMAGE={ecr_registry}/{generic_service['image']}:{generic_service['tag']}\n")
-        out.write(f"WORKER_IMAGE={ecr_registry}/{worker_service['image']}:{worker_service['tag']}\n")
+        out.write(f"GENERIC_REPOSITORY={generic_service['repo']}\n")
+        out.write(f"WORKER_REPOSITORY={worker_service['repo']}\n")
+        out.write(f"GENERIC_IMAGE={ecr_registry}/{generic_service['repo']}:{generic_service['tag']}\n")
+        out.write(f"WORKER_IMAGE={ecr_registry}/{worker_service['repo']}:{worker_service['tag']}\n")
         out.write(f"GENERIC_TAG={generic_service['tag']}\n")
         out.write(f"WORKER_TAG={worker_service['tag']}\n")
-        out.write(f"GENERIC_MIN_CAPACITY={generic_min}\n")
-        out.write(f"GENERIC_MAX_CAPACITY={generic_max}\n")
-        out.write(f"WORKER_MIN_CAPACITY={worker_min}\n")
-        out.write(f"WORKER_MAX_CAPACITY={worker_max}\n")
 
     print(f"Loaded {manifest_path}")
     print(f"Release: {release_name}")

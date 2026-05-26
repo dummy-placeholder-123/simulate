@@ -43,7 +43,7 @@ jobs:
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
             echo "- Worker service tag: ${WORKER_TAG}"
-            echo "- Non-prod bootstrap desired count: ${WORKER_MIN_CAPACITY}"
+            echo "- Non-prod bootstrap desired count: 1"
           } >> ${GITHUB_STEP_SUMMARY}
 
       - name: Login to Amazon ECR
@@ -80,5 +80,4 @@ jobs:
             ${ENGINE_CONTAINER} \
             ${WORKER_IMAGE} \
             ${DEPLOY_STAGE} \
-            ${WORKER_MIN_CAPACITY} \
             engine

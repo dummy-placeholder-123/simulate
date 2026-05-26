@@ -43,7 +43,7 @@ jobs:
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
             echo "- Generic service tag: ${GENERIC_TAG}"
-            echo "- Non-prod bootstrap desired count: ${GENERIC_MIN_CAPACITY}"
+            echo "- Non-prod bootstrap desired count: 1"
           } >> ${GITHUB_STEP_SUMMARY}
 
       - name: Login to Amazon ECR
@@ -80,5 +80,4 @@ jobs:
             ${FES_CONTAINER} \
             ${GENERIC_IMAGE} \
             ${DEPLOY_STAGE} \
-            ${GENERIC_MIN_CAPACITY} \
             fes
