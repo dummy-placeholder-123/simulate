@@ -11,7 +11,7 @@ on:
       - 'QCA/llm-engine/**'
       - 'QCA/fes-ui/**'
       - 'scripts/deploy/**'
-      - '.github/workflows/dev-full.yml'
+      - '.github/workflows/dev-pipeline.yml'
 
 permissions:
   contents: read
@@ -47,7 +47,7 @@ jobs:
               - 'QCA/fes-ui/**'
             shared_deploy:
               - 'scripts/deploy/**'
-              - '.github/workflows/dev-full.yml'
+              - '.github/workflows/dev-pipeline.yml'
 
       - name: Set up Java
         uses: actions/setup-java@v4

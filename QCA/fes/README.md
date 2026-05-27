@@ -54,8 +54,8 @@ environments/dev/fes-ui.yml
 GitHub Actions:
 
 ```text
-.github/workflows/release-fes-ui.yml
-.github/workflows/deploy-fes-ui.yml
+.github/workflows/release-ui.yml
+.github/workflows/deploy-ui.yml
 ```
 
 The hosted UI does not publish a Docker image. It publishes versioned static build artifacts and deploys them to a shared S3 + CloudFront site.
