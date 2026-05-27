@@ -1,5 +1,5 @@
 name: Dev Full
-run-name: Dev Test Release Deploy
+run-name: Dev Build And Deploy Changed Services
 
 on:
   push:
@@ -10,10 +10,6 @@ on:
       - 'QCA/engine/**'
       - 'QCA/llm-engine/**'
       - 'QCA/fes-ui/**'
-      - 'image-releases/fes.yml'
-      - 'image-releases/engine.yml'
-      - 'image-releases/llm-engine.yml'
-      - 'frontend-releases/fes-ui.yml'
       - 'scripts/deploy/**'
       - '.github/workflows/dev-full.yml'
 
@@ -28,11 +24,30 @@ env:
 
 jobs:
   dev-full:
-    name: Test Release Deploy Dev
+    name: Build And Deploy Changed Dev Services
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve changed areas
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            fes:
+              - 'QCA/fes/**'
+            engine:
+              - 'QCA/engine/**'
+            llm_engine:
+              - 'QCA/llm-engine/**'
+            fes_ui:
+              - 'QCA/fes-ui/**'
+            shared_deploy:
+              - 'scripts/deploy/**'
+              - '.github/workflows/dev-full.yml'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -55,11 +70,13 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Resolve ECR registry
+        if: ${{ steps.changes.outputs.fes == 'true' || steps.changes.outputs.engine == 'true' || steps.changes.outputs.llm_engine == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "${GITHUB_ENV}"
 
       - name: Login to Amazon ECR
+        if: ${{ steps.changes.outputs.fes == 'true' || steps.changes.outputs.engine == 'true' || steps.changes.outputs.llm_engine == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Resolve release tags
@@ -68,66 +85,65 @@ jobs:
           echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
 
       - name: Test FES
+        if: ${{ steps.changes.outputs.fes == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: mvn -B -f QCA/fes/pom.xml test
 
       - name: Test Engine
+        if: ${{ steps.changes.outputs.engine == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: mvn -B -f QCA/engine/pom.xml test
 
       - name: Test LLM Engine
+        if: ${{ steps.changes.outputs.llm_engine == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: mvn -B -f QCA/llm-engine/pom.xml test
 
       - name: Build FES UI
+        if: ${{ steps.changes.outputs.fes_ui == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
           cd QCA/fes-ui
           npm ci
           npm run build
 
-      - name: Read FES release config
-        run: python3 scripts/deploy/read_image_release.py image-releases/fes.yml
-
-      - name: Release and deploy FES
+      - name: Build current commit and deploy FES
+        if: ${{ steps.changes.outputs.fes == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
-          bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
+          bash scripts/deploy/build_and_push.sh "QCA/fes" "qca-fes" "latest"
           bash scripts/deploy/deploy_ecs.sh \
             "qca-dev-worker-cluster" \
             "qca-dev-fes-service" \
             "qca-dev-fes" \
             FesContainer \
-            "${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" \
+            "${ECR_REGISTRY}/qca-fes:${SHA_TAG}" \
             dev \
             fes
 
-      - name: Read engine release config
-        run: python3 scripts/deploy/read_image_release.py image-releases/engine.yml
-
-      - name: Release and deploy engine
+      - name: Build current commit and deploy engine
+        if: ${{ steps.changes.outputs.engine == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
-          bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
+          bash scripts/deploy/build_and_push.sh "QCA/engine" "qca-engine" "latest"
           bash scripts/deploy/deploy_ecs.sh \
             "qca-dev-worker-cluster" \
             "qca-dev-engine-service" \
             "qca-dev-engine" \
             EngineContainer \
-            "${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" \
+            "${ECR_REGISTRY}/qca-engine:${SHA_TAG}" \
             dev \
             engine
 
-      - name: Read llm engine release config
-        run: python3 scripts/deploy/read_image_release.py image-releases/llm-engine.yml
-
-      - name: Release and deploy llm engine
+      - name: Build current commit and deploy llm engine
+        if: ${{ steps.changes.outputs.llm_engine == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
-          bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
+          bash scripts/deploy/build_and_push.sh "QCA/llm-engine" "qca-llm-engine" "latest"
           bash scripts/deploy/deploy_ecs.sh \
             "qca-dev-worker-cluster" \
             "qca-dev-llm-engine-service" \
             "qca-dev-llm-engine" \
             EngineContainer \
-            "${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" \
+            "${ECR_REGISTRY}/qca-llm-engine:${SHA_TAG}" \
             dev \
             llm-engine
 
       - name: Resolve UI hosting outputs
+        if: ${{ steps.changes.outputs.fes_ui == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
           RELEASE_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name "${SHARED_INFRA_STACK}" \
@@ -151,19 +167,17 @@ jobs:
           echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
           echo "DEV_API_BASE_URL=http://${DEV_ALB_DNS}" >> "${GITHUB_ENV}"
 
-      - name: Read FES UI release config
-        run: python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
-
-      - name: Release and deploy FES UI
+      - name: Build current commit and deploy FES UI
+        if: ${{ steps.changes.outputs.fes_ui == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
         run: |
           bash scripts/deploy/publish_frontend_release.sh \
-            "${FRONTEND_SERVICE_DIR}" \
-            "${FRONTEND_ARTIFACT_PREFIX}" \
-            "${FRONTEND_STABLE_TAG}" \
+            "QCA/fes-ui" \
+            "fes-ui" \
+            "latest" \
             "${FES_UI_RELEASE_BUCKET}"
           bash scripts/deploy/deploy_static_site.sh \
             "${FES_UI_RELEASE_BUCKET}" \
-            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "fes-ui" \
             "${SHA_TAG}" \
             "${FES_UI_HOSTING_BUCKET}" \
             "${FES_UI_DISTRIBUTION_ID}" \
