@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: springBuild
-        ? resolve(__dirname, "../src/main/resources/static")
+        ? resolve(__dirname, "../fes/src/main/resources/static")
         : resolve(__dirname, "dist"),
       emptyOutDir: true,
       assetsDir: ".",
