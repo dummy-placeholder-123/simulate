@@ -82,9 +82,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Read FES release config
+        run: python3 scripts/deploy/read_image_release.py image-releases/fes.yml
+
       - name: Release and deploy FES
         run: |
-          python3 scripts/deploy/read_image_release.py image-releases/fes.yml
           bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
           bash scripts/deploy/deploy_ecs.sh \
             "qca-dev-worker-cluster" \
@@ -95,9 +97,11 @@ jobs:
             dev \
             fes
 
+      - name: Read engine release config
+        run: python3 scripts/deploy/read_image_release.py image-releases/engine.yml
+
       - name: Release and deploy engine
         run: |
-          python3 scripts/deploy/read_image_release.py image-releases/engine.yml
           bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
           bash scripts/deploy/deploy_ecs.sh \
             "qca-dev-worker-cluster" \
@@ -108,9 +112,11 @@ jobs:
             dev \
             engine
 
+      - name: Read llm engine release config
+        run: python3 scripts/deploy/read_image_release.py image-releases/llm-engine.yml
+
       - name: Release and deploy llm engine
         run: |
-          python3 scripts/deploy/read_image_release.py image-releases/llm-engine.yml
           bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
           bash scripts/deploy/deploy_ecs.sh \
             "qca-dev-worker-cluster" \
@@ -145,9 +151,11 @@ jobs:
           echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
           echo "DEV_API_BASE_URL=http://${DEV_ALB_DNS}" >> "${GITHUB_ENV}"
 
+      - name: Read FES UI release config
+        run: python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
+
       - name: Release and deploy FES UI
         run: |
-          python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
           bash scripts/deploy/publish_frontend_release.sh \
             "${FRONTEND_SERVICE_DIR}" \
             "${FRONTEND_ARTIFACT_PREFIX}" \

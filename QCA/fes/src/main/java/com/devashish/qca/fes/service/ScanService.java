@@ -33,6 +33,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -415,11 +416,15 @@ public class ScanService {
     }
 
     private JsonNode readFindingsDocument(String bucketName, String objectKey) {
-        return objectMapper.readTree(s3Client.getObjectAsBytes(GetObjectRequest.builder()
-                        .bucket(bucketName)
-                        .key(objectKey)
-                        .build())
-                .asByteArray());
+        try {
+            return objectMapper.readTree(s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                            .bucket(bucketName)
+                            .key(objectKey)
+                            .build())
+                    .asByteArray());
+        } catch (IOException exception) {
+            throw new IllegalStateException("failed to parse findings document from S3 object " + objectKey, exception);
+        }
     }
 
     private JsonNode readFindingsDocumentIfPresent(String bucketName, String objectKey) {
