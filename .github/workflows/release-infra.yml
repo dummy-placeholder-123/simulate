@@ -6,13 +6,13 @@ on:
       - '**'
     paths:
       - 'QCA/infra/**'
-      - '.github/workflows/infra-ci.yml'
+      - '.github/workflows/release-infra.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'QCA/infra/**'
-      - '.github/workflows/infra-ci.yml'
+      - '.github/workflows/release-infra.yml'
 
 permissions:
   contents: read

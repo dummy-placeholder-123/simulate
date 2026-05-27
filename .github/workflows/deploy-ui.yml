@@ -81,16 +81,16 @@ jobs:
         run: |
           resolve_api_url() {
             local stack_name="$1"
-            local alb_dns
-            alb_dns=$(aws cloudformation describe-stacks \
+            local api_base_url
+            api_base_url=$(aws cloudformation describe-stacks \
               --stack-name "${stack_name}" \
-              --query "Stacks[0].Outputs[?OutputKey=='FesAlbDnsName'].OutputValue" \
+              --query "Stacks[0].Outputs[?OutputKey=='FesApiBaseUrl'].OutputValue" \
               --output text)
-            if [ -z "${alb_dns}" ] || [ "${alb_dns}" = "None" ]; then
-              echo "FesAlbDnsName output not found in ${stack_name}" >&2
+            if [ -z "${api_base_url}" ] || [ "${api_base_url}" = "None" ]; then
+              echo "FesApiBaseUrl output not found in ${stack_name}" >&2
               exit 1
             fi
-            echo "http://${alb_dns}"
+            echo "${api_base_url}"
           }
 
           echo "DEV_API_BASE_URL=$(resolve_api_url InfraStack-dev)" >> "${GITHUB_ENV}"

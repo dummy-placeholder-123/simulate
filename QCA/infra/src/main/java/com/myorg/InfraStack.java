@@ -5,6 +5,7 @@ import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
+import software.amazon.awscdk.aws_apigatewayv2_integrations.HttpUrlIntegration;
 import software.amazon.awscdk.services.appconfig.Application;
 import software.amazon.awscdk.services.appconfig.ApplicationProps;
 import software.amazon.awscdk.services.appconfig.ConfigurationContent;
@@ -15,6 +16,12 @@ import software.amazon.awscdk.services.appconfig.EnvironmentProps;
 import software.amazon.awscdk.services.appconfig.HostedConfiguration;
 import software.amazon.awscdk.services.appconfig.HostedConfigurationProps;
 import software.amazon.awscdk.services.applicationautoscaling.EnableScalingProps;
+import software.amazon.awscdk.services.apigatewayv2.AddRoutesOptions;
+import software.amazon.awscdk.services.apigatewayv2.CorsHttpMethod;
+import software.amazon.awscdk.services.apigatewayv2.CorsPreflightOptions;
+import software.amazon.awscdk.services.apigatewayv2.HttpApi;
+import software.amazon.awscdk.services.apigatewayv2.HttpApiProps;
+import software.amazon.awscdk.services.apigatewayv2.HttpMethod;
 import software.amazon.awscdk.services.cloudwatch.Alarm;
 import software.amazon.awscdk.services.cloudwatch.AlarmProps;
 import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
@@ -743,8 +750,41 @@ public class InfraStack extends Stack {
                         .build())
                 .build()));
 
+        HttpUrlIntegration fesApiIntegration = new HttpUrlIntegration("FesApiIntegration",
+                "http://" + fesLoadBalancer.getLoadBalancerDnsName());
+
+        HttpApi fesHttpApi = new HttpApi(this, "FesHttpApi", HttpApiProps.builder()
+                .apiName(resourcePrefix + "-fes-api")
+                .corsPreflight(CorsPreflightOptions.builder()
+                        .allowOrigins(List.of("*"))
+                        .allowHeaders(List.of("authorization", "content-type", "x-trace-id", "x-span-id"))
+                        .allowMethods(List.of(
+                                CorsHttpMethod.GET,
+                                CorsHttpMethod.POST,
+                                CorsHttpMethod.PUT,
+                                CorsHttpMethod.OPTIONS))
+                        .maxAge(Duration.hours(1))
+                        .build())
+                .build());
+
+        fesHttpApi.addRoutes(AddRoutesOptions.builder()
+                .path("/")
+                .methods(List.of(HttpMethod.ANY))
+                .integration(fesApiIntegration)
+                .build());
+
+        fesHttpApi.addRoutes(AddRoutesOptions.builder()
+                .path("/{proxy+}")
+                .methods(List.of(HttpMethod.ANY))
+                .integration(fesApiIntegration)
+                .build());
+
         CfnOutput.Builder.create(this, "FesAlbDnsName")
                 .value(fesLoadBalancer.getLoadBalancerDnsName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesApiBaseUrl")
+                .value(fesHttpApi.getApiEndpoint())
                 .build();
 
         CfnOutput.Builder.create(this, "FesAlbGreenTestUrl")

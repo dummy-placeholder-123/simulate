@@ -11,7 +11,7 @@ on:
       - 'QCA/llm-engine/**'
       - 'QCA/fes-ui/**'
       - 'scripts/deploy/**'
-      - '.github/workflows/dev-pipeline.yml'
+      - '.github/workflows/deploy-full-dev-pipeline.yml'
 
 permissions:
   contents: read
@@ -47,7 +47,7 @@ jobs:
               - 'QCA/fes-ui/**'
             shared_deploy:
               - 'scripts/deploy/**'
-              - '.github/workflows/dev-pipeline.yml'
+              - '.github/workflows/deploy-full-dev-pipeline.yml'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -157,15 +157,15 @@ jobs:
             --stack-name "${SHARED_INFRA_STACK}" \
             --query "Stacks[0].Outputs[?OutputKey=='FesUiDistributionId'].OutputValue" \
             --output text)
-          DEV_ALB_DNS=$(aws cloudformation describe-stacks \
+          DEV_API_BASE_URL=$(aws cloudformation describe-stacks \
             --stack-name "InfraStack-dev" \
-            --query "Stacks[0].Outputs[?OutputKey=='FesAlbDnsName'].OutputValue" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesApiBaseUrl'].OutputValue" \
             --output text)
 
           echo "FES_UI_RELEASE_BUCKET=${RELEASE_BUCKET}" >> "${GITHUB_ENV}"
           echo "FES_UI_HOSTING_BUCKET=${HOSTING_BUCKET}" >> "${GITHUB_ENV}"
           echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
-          echo "DEV_API_BASE_URL=http://${DEV_ALB_DNS}" >> "${GITHUB_ENV}"
+          echo "DEV_API_BASE_URL=${DEV_API_BASE_URL}" >> "${GITHUB_ENV}"
 
       - name: Build current commit and deploy FES UI
         if: ${{ steps.changes.outputs.fes_ui == 'true' || steps.changes.outputs.shared_deploy == 'true' }}
