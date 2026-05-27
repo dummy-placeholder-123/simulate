@@ -1,0 +1,82 @@
+name: Release FES UI
+run-name: FES UI Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'QCA/fes/frontend/**'
+      - 'frontend-releases/fes-ui.yml'
+      - 'scripts/deploy/read_frontend_release.py'
+      - 'scripts/deploy/publish_frontend_release.sh'
+      - '.github/workflows/release-fes-ui.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+  SHARED_INFRA_STACK: InfraStack-dev
+
+jobs:
+  release:
+    name: Release FES UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: QCA/fes/frontend/package-lock.json
+
+      - name: Read frontend release config
+        run: python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
+
+      - name: Resolve shared UI release bucket
+        run: |
+          RELEASE_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiReleaseBucketName'].OutputValue" \
+            --output text)
+          if [ -z "${RELEASE_BUCKET}" ] || [ "${RELEASE_BUCKET}" = "None" ]; then
+            echo "FesUiReleaseBucketName output not found in ${SHARED_INFRA_STACK}" >&2
+            exit 1
+          fi
+          echo "FES_UI_RELEASE_BUCKET=${RELEASE_BUCKET}" >> "${GITHUB_ENV}"
+
+      - name: Resolve release tags
+        run: |
+          echo "SHA_TAG=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
+
+      - name: Publish frontend release artifacts
+        run: |
+          bash scripts/deploy/publish_frontend_release.sh \
+            "${FRONTEND_SERVICE_DIR}" \
+            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "${FRONTEND_STABLE_TAG}" \
+            "${FES_UI_RELEASE_BUCKET}"
+
+      - name: Write release summary
+        run: |
+          {
+            echo "## FES UI Release"
+            echo ""
+            echo "- Release label: ${FRONTEND_RELEASE_LABEL}"
+            echo "- Artifact prefix: ${FRONTEND_ARTIFACT_PREFIX}"
+            echo "- Release bucket: ${FES_UI_RELEASE_BUCKET}"
+            echo "- Tags pushed: ${FRONTEND_STABLE_TAG}, ${SHA_TAG}, ${DATE_TAG}"
+          } >> "${GITHUB_STEP_SUMMARY}"
