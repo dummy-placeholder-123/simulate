@@ -3,8 +3,13 @@
 @refreshToken = replace-with-refresh-token
 @uploadUrl = paste-presigned-upload-url-here
 @uploadFile = ./amazon-q-detectors-main.zip
+@accountId = 564061926474
+@scanId = scan-local-001
 
-### Login and get access/refresh tokens
+### Health
+GET {{baseUrl}}/actuator/health
+
+### Login
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
@@ -13,7 +18,7 @@ Content-Type: application/json
   "password": "local-dev-password"
 }
 
-### Refresh access token
+### Refresh tokens
 POST {{baseUrl}}/api/auth/refresh
 Content-Type: application/json
 
@@ -21,14 +26,14 @@ Content-Type: application/json
   "refreshToken": "{{refreshToken}}"
 }
 
-### Create GitHub PR scan
+### Create scan
 POST {{baseUrl}}/api/create-scan
 Content-Type: application/json
 Authorization: Bearer {{accessToken}}
 
 {
-  "scanId": "scan-local-001",
-  "accountId": "564061926474",
+  "scanId": "{{scanId}}",
+  "accountId": "{{accountId}}",
   "repoFullName": "devashishrane/qca",
   "prNumber": 42,
   "headSha": "abc123def4567890",
@@ -36,26 +41,27 @@ Authorization: Bearer {{accessToken}}
   "service": "fes"
 }
 
-### Upload scan input to presigned URL
+### Upload scan input using the uploadUrl returned by create-scan
 PUT {{uploadUrl}}
 Content-Type: application/octet-stream
 
 < {{uploadFile}}
 
-### Start scan processing
+### Start scan
 POST {{baseUrl}}/api/start-scan
 Content-Type: application/json
 Authorization: Bearer {{accessToken}}
 
 {
-  "scanId": "scan-local-001"
+  "scanId": "{{scanId}}"
 }
 
 ### List scans by account
-GET {{baseUrl}}/api/accounts/564061926474/scans?limit=50
+GET {{baseUrl}}/api/accounts/{{accountId}}/scans?limit=50
 
 ### Get scan status
-GET {{baseUrl}}/api/scans/scan-local-001/status
+GET {{baseUrl}}/api/scans/{{scanId}}/status
 
 ### Get scan findings
-GET {{baseUrl}}/api/scans/scan-local-001/findings
+### If only one engine succeeded, findings will return the successful engine output only.
+GET {{baseUrl}}/api/scans/{{scanId}}/findings
