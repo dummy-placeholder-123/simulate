@@ -2,11 +2,15 @@ name: Deploy FES
 run-name: FES Release From Environment Manifests
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'environments/*/fes.yml'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Environment stage
+        required: true
+        type: choice
+        options:
+          - qa
+          - prod
 
 permissions:
   contents: read
@@ -24,8 +28,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -38,30 +40,9 @@ jobs:
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
 
-      - name: Resolve changed FES manifest
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
+      - name: Resolve FES manifest
         run: |
-          set -euo pipefail
-
-          ZERO_SHA=0000000000000000000000000000000000000000
-          if [ "${BEFORE_SHA}" = "${ZERO_SHA}" ]; then
-            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'environments/*/fes.yml')
-          else
-            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'environments/*/fes.yml')
-          fi
-
-          if [ "${#CHANGED_MANIFESTS[@]}" -eq 0 ]; then
-            echo "No changed FES manifest found." >&2
-            exit 1
-          fi
-
-          if [ "${#CHANGED_MANIFESTS[@]}" -gt 1 ]; then
-            printf 'Only one FES env manifest change is allowed per push.\nChanged files:\n%s\n' "${CHANGED_MANIFESTS[@]}" >&2
-            exit 1
-          fi
-
-          echo "MANIFEST_PATH=${CHANGED_MANIFESTS[0]}" >> "${GITHUB_ENV}"
+          echo "MANIFEST_PATH=environments/${{ inputs.stage }}/fes.yml" >> "${GITHUB_ENV}"
 
       - name: Read service manifest
         run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"

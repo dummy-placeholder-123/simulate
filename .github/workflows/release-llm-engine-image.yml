@@ -4,13 +4,14 @@ run-name: LLM Engine Image Release
 on:
   push:
     branches:
-      - main
+      - dev
     paths:
       - 'QCA/llm-engine/**'
       - 'image-releases/llm-engine.yml'
       - 'scripts/deploy/build_and_push.sh'
       - 'scripts/deploy/read_image_release.py'
       - '.github/workflows/release-llm-engine-image.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -53,6 +54,26 @@ jobs:
       - name: Build and push llm engine image
         run: bash scripts/deploy/build_and_push.sh ${RELEASE_SERVICE_DIR} ${RELEASE_REPOSITORY} ${RELEASE_STABLE_TAG}
 
+      - name: Resolve dev ECS names
+        if: ${{ github.event_name == 'push' && github.ref_name == 'dev' }}
+        run: |
+          echo "ENGINE_CLUSTER=qca-dev-worker-cluster" >> ${GITHUB_ENV}
+          echo "LLM_ENGINE_SERVICE=qca-dev-llm-engine-service" >> ${GITHUB_ENV}
+          echo "LLM_ENGINE_TASK_FAMILY=qca-dev-llm-engine" >> ${GITHUB_ENV}
+          echo "DEV_IMAGE_URI=${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" >> ${GITHUB_ENV}
+
+      - name: Auto deploy llm engine to dev
+        if: ${{ github.event_name == 'push' && github.ref_name == 'dev' }}
+        run: |
+          bash scripts/deploy/deploy_ecs.sh \
+            "${ENGINE_CLUSTER}" \
+            "${LLM_ENGINE_SERVICE}" \
+            "${LLM_ENGINE_TASK_FAMILY}" \
+            EngineContainer \
+            "${DEV_IMAGE_URI}" \
+            dev \
+            llm-engine
+
       - name: Write release summary
         run: |
           {
@@ -61,4 +82,7 @@ jobs:
             echo "- Release label: ${RELEASE_LABEL}"
             echo "- Repository: ${RELEASE_REPOSITORY}"
             echo "- Tags pushed: ${RELEASE_STABLE_TAG}, ${SHA_TAG}, ${DATE_TAG}"
+            if [ "${GITHUB_REF_NAME}" = "dev" ] && [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+              echo "- Auto deployed to: dev"
+            fi
           } >> ${GITHUB_STEP_SUMMARY}

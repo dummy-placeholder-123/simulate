@@ -4,13 +4,14 @@ run-name: FES UI Release
 on:
   push:
     branches:
-      - main
+      - dev
     paths:
-      - 'QCA/fes/frontend/**'
+      - 'QCA/fes-ui/**'
       - 'frontend-releases/fes-ui.yml'
       - 'scripts/deploy/read_frontend_release.py'
       - 'scripts/deploy/publish_frontend_release.sh'
       - '.github/workflows/release-fes-ui.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,7 +41,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: QCA/fes/frontend/package-lock.json
+          cache-dependency-path: QCA/fes-ui/package-lock.json
 
       - name: Read frontend release config
         run: python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
@@ -70,6 +71,56 @@ jobs:
             "${FRONTEND_STABLE_TAG}" \
             "${FES_UI_RELEASE_BUCKET}"
 
+      - name: Resolve shared UI hosting outputs
+        if: ${{ github.event_name == 'push' && github.ref_name == 'dev' }}
+        run: |
+          HOSTING_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiHostingBucketName'].OutputValue" \
+            --output text)
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiDistributionId'].OutputValue" \
+            --output text)
+
+          for VALUE in "${HOSTING_BUCKET}" "${DISTRIBUTION_ID}"; do
+            if [ -z "${VALUE}" ] || [ "${VALUE}" = "None" ]; then
+              echo "Shared UI hosting outputs not found in ${SHARED_INFRA_STACK}" >&2
+              exit 1
+            fi
+          done
+
+          echo "FES_UI_HOSTING_BUCKET=${HOSTING_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
+
+      - name: Resolve dev API URL
+        if: ${{ github.event_name == 'push' && github.ref_name == 'dev' }}
+        run: |
+          DEV_ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name "InfraStack-dev" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesAlbDnsName'].OutputValue" \
+            --output text)
+          if [ -z "${DEV_ALB_DNS}" ] || [ "${DEV_ALB_DNS}" = "None" ]; then
+            echo "FesAlbDnsName output not found in InfraStack-dev" >&2
+            exit 1
+          fi
+
+          echo "DEV_API_BASE_URL=http://${DEV_ALB_DNS}" >> "${GITHUB_ENV}"
+
+      - name: Auto deploy UI to dev
+        if: ${{ github.event_name == 'push' && github.ref_name == 'dev' }}
+        run: |
+          bash scripts/deploy/deploy_static_site.sh \
+            "${FES_UI_RELEASE_BUCKET}" \
+            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "${SHA_TAG}" \
+            "${FES_UI_HOSTING_BUCKET}" \
+            "${FES_UI_DISTRIBUTION_ID}" \
+            "dev" \
+            "${DEV_API_BASE_URL}" \
+            "${DEV_API_BASE_URL}" \
+            "${DEV_API_BASE_URL}"
+
       - name: Write release summary
         run: |
           {
@@ -79,4 +130,7 @@ jobs:
             echo "- Artifact prefix: ${FRONTEND_ARTIFACT_PREFIX}"
             echo "- Release bucket: ${FES_UI_RELEASE_BUCKET}"
             echo "- Tags pushed: ${FRONTEND_STABLE_TAG}, ${SHA_TAG}, ${DATE_TAG}"
+            if [ "${GITHUB_REF_NAME}" = "dev" ] && [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+              echo "- Auto deployed to: dev"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"

@@ -2,11 +2,7 @@ name: Deploy FES UI
 run-name: FES UI Deploy From Shared Manifest
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'environments/shared/fes-ui.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,8 +20,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -33,25 +27,9 @@ jobs:
           role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Resolve changed shared UI manifest
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
+      - name: Resolve shared UI manifest
         run: |
-          set -euo pipefail
-
-          ZERO_SHA=0000000000000000000000000000000000000000
-          if [ "${BEFORE_SHA}" = "${ZERO_SHA}" ]; then
-            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'environments/shared/fes-ui.yml')
-          else
-            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'environments/shared/fes-ui.yml')
-          fi
-
-          if [ "${#CHANGED_MANIFESTS[@]}" -ne 1 ]; then
-            printf 'Exactly one shared UI manifest change is required.\nChanged files:\n%s\n' "${CHANGED_MANIFESTS[@]-}" >&2
-            exit 1
-          fi
-
-          echo "MANIFEST_PATH=${CHANGED_MANIFESTS[0]}" >> "${GITHUB_ENV}"
+          echo "MANIFEST_PATH=environments/shared/fes-ui.yml" >> "${GITHUB_ENV}"
 
       - name: Read shared UI manifest
         run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"
