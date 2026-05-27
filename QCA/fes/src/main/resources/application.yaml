@@ -1,6 +1,8 @@
 spring:
   application:
     name: fes
+  main:
+    banner-mode: "off"
 
 qca:
   aws:
@@ -16,9 +18,29 @@ qca:
   idempotency:
     ttl-hours: ${QCA_IDEMPOTENCY_TTL_HOURS:24}
   security:
-    api-key: ${QCA_FES_API_KEY:local-dev-api-key}
+    demo-username: ${QCA_FES_DEMO_USERNAME:qca-admin}
+    demo-password: ${QCA_FES_DEMO_PASSWORD:local-dev-password}
+    jwt-signing-key: ${QCA_JWT_SIGNING_KEY:local-dev-jwt-signing-key-local-dev-jwt-signing-key}
+    access-token-ttl-seconds: ${QCA_JWT_ACCESS_TTL_SECONDS:900}
+    refresh-token-ttl-seconds: ${QCA_JWT_REFRESH_TTL_SECONDS:604800}
   appconfig:
     application-id: ${QCA_APPCONFIG_APPLICATION_ID:}
     environment-id: ${QCA_APPCONFIG_ENVIRONMENT_ID:}
     profile-id: ${QCA_APPCONFIG_PROFILE_ID:}
     poll-seconds: ${QCA_APPCONFIG_POLL_SECONDS:30}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%-5level traceId=%X{traceId:-} spanId=%X{spanId:-} thread=%thread logger=%logger{36} msg=%msg%n"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}

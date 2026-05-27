@@ -58,6 +58,8 @@ public class AppConfigFeatureFlagsService implements DisposableBean {
             return;
         }
 
+        log.info("Starting AppConfig polling applicationId={} environmentId={} profileId={} pollSeconds={}",
+                applicationId, environmentId, profileId, pollSeconds);
         refreshSafely();
         scheduler.scheduleWithFixedDelay(this::refreshSafely, pollSeconds, pollSeconds, TimeUnit.SECONDS);
     }
@@ -121,9 +123,12 @@ public class AppConfigFeatureFlagsService implements DisposableBean {
         }
 
         JsonNode document = objectMapper.readTree(payload);
-        currentFlags.set(new FeatureFlags(
+        FeatureFlags nextFlags = new FeatureFlags(
                 document.path("enableCreateScan").asBoolean(true),
-                document.path("enableStartScan").asBoolean(true)));
+                document.path("enableStartScan").asBoolean(true));
+        currentFlags.set(nextFlags);
+        log.info("Applied AppConfig feature flags enableCreateScan={} enableStartScan={}",
+                nextFlags.enableCreateScan(), nextFlags.enableStartScan());
     }
 
     private boolean hasText(String value) {

@@ -15,7 +15,11 @@ import software.amazon.awscdk.services.appconfig.EnvironmentProps;
 import software.amazon.awscdk.services.appconfig.HostedConfiguration;
 import software.amazon.awscdk.services.appconfig.HostedConfigurationProps;
 import software.amazon.awscdk.services.applicationautoscaling.EnableScalingProps;
+import software.amazon.awscdk.services.cloudwatch.Alarm;
+import software.amazon.awscdk.services.cloudwatch.AlarmProps;
+import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
 import software.amazon.awscdk.services.cloudwatch.Metric;
+import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
 import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
@@ -200,12 +204,21 @@ public class InfraStack extends Stack {
                 .stateMachineType(StateMachineType.STANDARD)
                 .build();
 
-        Secret fesApiKeySecret = Secret.Builder.create(this, "FesApiKeySecret")
-                .secretName(fesConfigPathPrefix + "/api-key")
-                .description("Shared API key required for mutating FES endpoints")
+        Secret fesDemoPasswordSecret = Secret.Builder.create(this, "FesDemoPasswordSecret")
+                .secretName(fesConfigPathPrefix + "/demo-user-password")
+                .description("Password for the demo FES operator account")
                 .generateSecretString(SecretStringGenerator.builder()
                         .excludePunctuation(true)
-                        .passwordLength(32)
+                        .passwordLength(24)
+                        .build())
+                .build();
+
+        Secret fesJwtSigningSecret = Secret.Builder.create(this, "FesJwtSigningSecret")
+                .secretName(fesConfigPathPrefix + "/jwt-signing-key")
+                .description("JWT signing key used by FES for access and refresh tokens")
+                .generateSecretString(SecretStringGenerator.builder()
+                        .excludePunctuation(true)
+                        .passwordLength(64)
                         .build())
                 .build();
 
@@ -286,7 +299,8 @@ public class InfraStack extends Stack {
                         "service-role/AmazonECSTaskExecutionRolePolicy")))
                 .build();
 
-        fesApiKeySecret.grantRead(fesExecutionRole);
+        fesDemoPasswordSecret.grantRead(fesExecutionRole);
+        fesJwtSigningSecret.grantRead(fesExecutionRole);
         fesPresignedUrlDurationParameter.grantRead(fesExecutionRole);
 
         Role fesBlueGreenInfrastructureRole = Role.Builder.create(this, "FesBlueGreenInfrastructureRole")
@@ -363,19 +377,23 @@ public class InfraStack extends Stack {
                 .portMappings(List.of(PortMapping.builder()
                         .containerPort(8080)
                         .build()))
-                .environment(Map.of(
-                        "AWS_REGION", StageConfig.AWS_REGION,
-                        "QCA_DYNAMODB_SCAN_TABLE_NAME", scanTableName,
-                        "QCA_DYNAMODB_IDEMPOTENCY_TABLE_NAME", scanIdempotencyTable.getTableName(),
-                        "QCA_S3_SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName,
-                        "QCA_STEP_FUNCTIONS_SCAN_STATE_MACHINE_ARN", scanStateMachine.getStateMachineArn(),
-                        "QCA_IDEMPOTENCY_TTL_HOURS", "24",
-                        "QCA_APPCONFIG_APPLICATION_ID", fesAppConfigApplication.getApplicationId(),
-                        "QCA_APPCONFIG_ENVIRONMENT_ID", fesAppConfigEnvironment.getEnvironmentId(),
-                        "QCA_APPCONFIG_PROFILE_ID", fesAppConfigHostedConfiguration.getConfigurationProfileId(),
-                        "QCA_APPCONFIG_POLL_SECONDS", "30"))
+                .environment(Map.ofEntries(
+                        Map.entry("AWS_REGION", StageConfig.AWS_REGION),
+                        Map.entry("QCA_DYNAMODB_SCAN_TABLE_NAME", scanTableName),
+                        Map.entry("QCA_DYNAMODB_IDEMPOTENCY_TABLE_NAME", scanIdempotencyTable.getTableName()),
+                        Map.entry("QCA_S3_SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName),
+                        Map.entry("QCA_STEP_FUNCTIONS_SCAN_STATE_MACHINE_ARN", scanStateMachine.getStateMachineArn()),
+                        Map.entry("QCA_IDEMPOTENCY_TTL_HOURS", "24"),
+                        Map.entry("QCA_FES_DEMO_USERNAME", "qca-admin"),
+                        Map.entry("QCA_JWT_ACCESS_TTL_SECONDS", "900"),
+                        Map.entry("QCA_JWT_REFRESH_TTL_SECONDS", "604800"),
+                        Map.entry("QCA_APPCONFIG_APPLICATION_ID", fesAppConfigApplication.getApplicationId()),
+                        Map.entry("QCA_APPCONFIG_ENVIRONMENT_ID", fesAppConfigEnvironment.getEnvironmentId()),
+                        Map.entry("QCA_APPCONFIG_PROFILE_ID", fesAppConfigHostedConfiguration.getConfigurationProfileId()),
+                        Map.entry("QCA_APPCONFIG_POLL_SECONDS", "30")))
                 .secrets(Map.of(
-                        "QCA_FES_API_KEY", software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(fesApiKeySecret),
+                        "QCA_FES_DEMO_PASSWORD", software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(fesDemoPasswordSecret),
+                        "QCA_JWT_SIGNING_KEY", software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(fesJwtSigningSecret),
                         "QCA_S3_PRESIGNED_URL_DURATION_MINUTES", software.amazon.awscdk.services.ecs.Secret.fromSsmParameter(fesPresignedUrlDurationParameter)))
                 .build());
 
@@ -511,8 +529,16 @@ public class InfraStack extends Stack {
                 .value("http://" + fesLoadBalancer.getLoadBalancerDnsName() + ":9000")
                 .build();
 
-        CfnOutput.Builder.create(this, "FesApiKeySecretName")
-                .value(fesApiKeySecret.getSecretName())
+        CfnOutput.Builder.create(this, "FesDemoUsername")
+                .value("qca-admin")
+                .build();
+
+        CfnOutput.Builder.create(this, "FesDemoPasswordSecretName")
+                .value(fesDemoPasswordSecret.getSecretName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesJwtSigningSecretName")
+                .value(fesJwtSigningSecret.getSecretName())
                 .build();
 
         CfnOutput.Builder.create(this, "FesPresignedUrlDurationParameterName")
@@ -580,5 +606,69 @@ public class InfraStack extends Stack {
                         .scaleInCooldown(Duration.minutes(2))
                         .scaleOutCooldown(Duration.minutes(1))
                         .build());
+
+        Alarm fesAlb5xxAlarm = new Alarm(this, "FesAlb5xxAlarm", AlarmProps.builder()
+                .alarmName(resourcePrefix + "-fes-alb-5xx")
+                .alarmDescription("FES ALB 5xx responses detected")
+                .metric(Metric.Builder.create()
+                        .namespace("AWS/ApplicationELB")
+                        .metricName("HTTPCode_ELB_5XX_Count")
+                        .dimensionsMap(Map.of("LoadBalancer", fesLoadBalancer.getLoadBalancerFullName()))
+                        .statistic("Sum")
+                        .period(Duration.minutes(1))
+                        .build())
+                .threshold(1)
+                .evaluationPeriods(1)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build());
+
+        Alarm fesTargetResponseTimeAlarm = new Alarm(this, "FesTargetResponseTimeAlarm", AlarmProps.builder()
+                .alarmName(resourcePrefix + "-fes-target-response-time")
+                .alarmDescription("FES target response time is elevated")
+                .metric(Metric.Builder.create()
+                        .namespace("AWS/ApplicationELB")
+                        .metricName("TargetResponseTime")
+                        .dimensionsMap(Map.of(
+                                "LoadBalancer", fesLoadBalancer.getLoadBalancerFullName(),
+                                "TargetGroup", fesBlueTargetGroup.getTargetGroupFullName()))
+                        .statistic("Average")
+                        .period(Duration.minutes(1))
+                        .build())
+                .threshold(2)
+                .evaluationPeriods(2)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build());
+
+        Alarm fesRunningTaskCountAboveTwoAlarm = new Alarm(this, "FesRunningTaskCountAboveTwoAlarm", AlarmProps.builder()
+                .alarmName(resourcePrefix + "-fes-running-task-count-above-two")
+                .alarmDescription("FES service is running more than two tasks")
+                .metric(Metric.Builder.create()
+                        .namespace("AWS/ECS")
+                        .metricName("RunningTaskCount")
+                        .dimensionsMap(Map.of(
+                                "ClusterName", cluster.getClusterName(),
+                                "ServiceName", resourcePrefix + "-fes-service"))
+                        .statistic("Average")
+                        .period(Duration.minutes(1))
+                        .build())
+                .threshold(2)
+                .evaluationPeriods(2)
+                .comparisonOperator(ComparisonOperator.GREATER_THAN_THRESHOLD)
+                .treatMissingData(TreatMissingData.NOT_BREACHING)
+                .build());
+
+        CfnOutput.Builder.create(this, "FesAlb5xxAlarmName")
+                .value(fesAlb5xxAlarm.getAlarmName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesTargetResponseTimeAlarmName")
+                .value(fesTargetResponseTimeAlarm.getAlarmName())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesRunningTaskCountAboveTwoAlarmName")
+                .value(fesRunningTaskCountAboveTwoAlarm.getAlarmName())
+                .build();
     }
 }

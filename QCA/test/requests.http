@@ -1,12 +1,30 @@
 @baseUrl = http://localhost:8080
-@apiKey = local-dev-api-key
+@accessToken = replace-with-access-token
+@refreshToken = replace-with-refresh-token
 @uploadUrl = paste-presigned-upload-url-here
 @uploadFile = ./amazon-q-detectors-main.zip
+
+### Login and get access/refresh tokens
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "qca-admin",
+  "password": "local-dev-password"
+}
+
+### Refresh access token
+POST {{baseUrl}}/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
 
 ### Create GitHub PR scan
 POST {{baseUrl}}/api/create-scan
 Content-Type: application/json
-X-API-Key: {{apiKey}}
+Authorization: Bearer {{accessToken}}
 
 {
   "scanId": "scan-local-001",
@@ -27,7 +45,7 @@ Content-Type: application/octet-stream
 ### Start scan processing
 POST {{baseUrl}}/api/start-scan
 Content-Type: application/json
-X-API-Key: {{apiKey}}
+Authorization: Bearer {{accessToken}}
 
 {
   "scanId": "scan-local-001"

@@ -7,7 +7,7 @@ import com.devashish.qca.fes.dto.ScanResponse;
 import com.devashish.qca.fes.dto.ScanStatusResponse;
 import com.devashish.qca.fes.dto.StartScanRequest;
 import com.devashish.qca.fes.dto.StartScanResponse;
-import com.devashish.qca.fes.service.FesAccessGuard;
+import com.devashish.qca.fes.service.FeatureFlagGuard;
 import com.devashish.qca.fes.service.ScanService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,28 +26,24 @@ import java.util.List;
 @RequestMapping("/api")
 public class FrontController {
 
-    private final FesAccessGuard fesAccessGuard;
+    private final FeatureFlagGuard featureFlagGuard;
     private final ScanService scanService;
 
-    public FrontController(FesAccessGuard fesAccessGuard, ScanService scanService) {
-        this.fesAccessGuard = fesAccessGuard;
+    public FrontController(FeatureFlagGuard featureFlagGuard, ScanService scanService) {
+        this.featureFlagGuard = featureFlagGuard;
         this.scanService = scanService;
     }
 
     @PostMapping("/create-scan")
-    public ResponseEntity<ScanResponse> createScan(
-            @RequestHeader(name = "X-API-Key", required = false) String apiKey,
-            @RequestBody ScanRequest request) {
-        fesAccessGuard.requireCreateScanAccess(apiKey);
+    public ResponseEntity<ScanResponse> createScan(@RequestBody ScanRequest request) {
+        featureFlagGuard.requireCreateScanEnabled();
         ScanResponse response = scanService.createScan(request);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }
 
     @PostMapping("/start-scan")
-    public ResponseEntity<StartScanResponse> startScan(
-            @RequestHeader(name = "X-API-Key", required = false) String apiKey,
-            @RequestBody StartScanRequest request) {
-        fesAccessGuard.requireStartScanAccess(apiKey);
+    public ResponseEntity<StartScanResponse> startScan(@RequestBody StartScanRequest request) {
+        featureFlagGuard.requireStartScanEnabled();
         StartScanResponse response = scanService.startScan(request);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }

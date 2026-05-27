@@ -10,6 +10,8 @@ import com.devashish.qca.fes.dto.StartScanResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -38,6 +40,7 @@ import java.util.UUID;
 
 @Service
 public class ScanService {
+    private static final Logger log = LoggerFactory.getLogger(ScanService.class);
     private static final String WAITING_FOR_UPLOAD = "WAITING_FOR_UPLOAD";
     private static final String QUEUED = "QUEUED";
     private static final String DUPLICATE = "DUPLICATE";
@@ -93,10 +96,14 @@ public class ScanService {
         try {
             putIdempotencyRecord(request, scanId, idempotencyKey, createdAt, nowEpochSecond, expiresAt);
         } catch (ConditionalCheckFailedException e) {
+            log.info("createScan duplicate accountId={} repo={} prNumber={} scanId={}",
+                    request.accountId(), request.repoFullName(), request.prNumber(), scanId);
             return duplicateResponse(request, scanId, idempotencyKey, createdAt);
         }
 
         putScanRecord(request, scanId, idempotencyKey, createdAt, expiresAt, WAITING_FOR_UPLOAD);
+        log.info("createScan accepted accountId={} repo={} prNumber={} scanId={} status={}",
+                request.accountId(), request.repoFullName(), request.prNumber(), scanId, WAITING_FOR_UPLOAD);
 
         return response(request, scanId, WAITING_FOR_UPLOAD, idempotencyKey, createdAt);
     }
@@ -113,12 +120,16 @@ public class ScanService {
 
         String currentStatus = stringAttribute(scanItem, "status", null);
         if (QUEUED.equals(currentStatus)) {
+            log.info("startScan alreadyQueued scanId={} queuedAt={}",
+                    request.scanId(), stringAttribute(scanItem, "queuedAt", null));
             return new StartScanResponse(request.scanId(), QUEUED, stringAttribute(scanItem, "queuedAt", null));
         }
 
         String queuedAt = Instant.now().toString();
         startScanStateMachine(scanItem, queuedAt);
         updateScanQueued(request.scanId(), queuedAt);
+        log.info("startScan queued scanId={} accountId={} queuedAt={}",
+                request.scanId(), stringAttribute(scanItem, "accountId", null), queuedAt);
 
         return new StartScanResponse(request.scanId(), QUEUED, queuedAt);
     }
@@ -129,6 +140,7 @@ public class ScanService {
         }
 
         int queryLimit = limit == null ? 50 : Math.max(1, Math.min(limit, 100));
+        log.info("listScans accountId={} limit={}", accountId, queryLimit);
 
         return dynamoDbClient.query(QueryRequest.builder()
                         .tableName(scanTableName)
@@ -166,6 +178,7 @@ public class ScanService {
                             .key(resultObjectKey)
                             .build())
                     .asByteArray());
+            log.info("getScanFindings scanId={} bucket={} key={}", scanId, resultBucketName, resultObjectKey);
 
             return new ScanFindingsResponse(
                     scanId,
@@ -176,6 +189,7 @@ public class ScanService {
         } catch (NoSuchKeyException e) {
             throw new IllegalArgumentException("scan findings file not found");
         } catch (Exception e) {
+            log.error("getScanFindings failed scanId={} bucket={} key={}", scanId, resultBucketName, resultObjectKey, e);
             throw new IllegalStateException("failed to read scan findings", e);
         }
     }
@@ -191,6 +205,7 @@ public class ScanService {
         }
 
         String status = stringAttribute(scanItem, "status", null);
+        log.info("getScanStatus scanId={} status={}", scanId, status);
         return new ScanStatusResponse(
                 stringAttribute(scanItem, "scanId", null),
                 status,
