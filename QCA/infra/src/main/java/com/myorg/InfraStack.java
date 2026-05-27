@@ -119,6 +119,7 @@ public class InfraStack extends Stack {
         String scanTableName = resourcePrefix + "-scans";
         String fesConfigPathPrefix = "/qca/" + stage + "/fes";
         boolean isProd = "prod".equals(stage);
+        boolean isDev = "dev".equals(stage);
         int engineDesiredCount = isProd ? 1 : 0;
         int engineMinCapacity = isProd ? 1 : 0;
         int llmEngineDesiredCount = isProd ? 1 : 0;
@@ -175,9 +176,9 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
-        if (isProd) {
-            String uiHostingBucketName = "qca-fes-ui-host-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
-            String uiReleaseBucketName = "qca-fes-ui-releases-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
+        if (isDev) {
+            String uiHostingBucketName = resourcePrefix + "-fes-ui-host-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
+            String uiReleaseBucketName = resourcePrefix + "-fes-ui-releases-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
 
             Bucket fesUiHostingBucket = Bucket.Builder.create(this, "FesUiHostingBucket")
                     .bucketName(uiHostingBucketName)

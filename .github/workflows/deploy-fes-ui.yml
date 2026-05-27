@@ -15,7 +15,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
-  SHARED_INFRA_STACK: InfraStack
+  SHARED_INFRA_STACK: InfraStack-dev
 
 jobs:
   deploy:
