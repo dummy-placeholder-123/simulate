@@ -30,31 +30,76 @@ function MethodBadge({ method }) {
   return <span className={`method-badge ${method.toLowerCase()}`}>{method}</span>;
 }
 
-function RequestCard({ title, method, path, description, actions, fields, requestPreview }) {
+function ResponsePanel({ response }) {
+  if (!response) {
+    return (
+      <div className="response-panel">
+        <div className="summary-label">Response</div>
+        <pre className="code-block">{pretty({ message: "No response yet." })}</pre>
+      </div>
+    );
+  }
+
   return (
-    <article className="request-card">
-      <div className="request-header">
-        <div>
+    <div className="response-panel">
+      <div className="response-header">
+        <div className="response-meta">
+          <span className={`response-stat ${statusTone(response.status)}`}>
+            Status {response.status || "ERR"} {response.statusText || ""}
+          </span>
+          <span className="response-stat">{response.durationMs} ms</span>
+        </div>
+        <button className="ghost-button" type="button" onClick={() => copyJson(response.body)}>
+          Copy Body
+        </button>
+      </div>
+      <pre className="code-block">{pretty(response.body)}</pre>
+    </div>
+  );
+}
+
+function RequestSection({
+  title,
+  method,
+  path,
+  description,
+  defaultOpen = false,
+  fields,
+  actions,
+  requestPreview,
+  response,
+}) {
+  return (
+    <details className="request-section" open={defaultOpen}>
+      <summary className="request-summary">
+        <div className="request-summary-main">
           <h3 className="request-title">{title}</h3>
           <div className="request-meta">
             <MethodBadge method={method} />
             <span>{path}</span>
           </div>
-          <p className="panel-description">{description}</p>
         </div>
+        {response ? (
+          <div className="request-summary-status">
+            <span className={`response-stat ${statusTone(response.status)}`}>{response.status || "ERR"}</span>
+            <span className="response-stat">{response.durationMs} ms</span>
+          </div>
+        ) : null}
+      </summary>
+
+      <div className="request-body">
+        <p className="panel-description">{description}</p>
+        {fields ? <div className="request-fields">{fields}</div> : null}
         <div className="button-row">{actions}</div>
-      </div>
-
-      {fields}
-
-      <div className="divider" />
-      <div className="section-grid">
-        <div>
-          <div className="summary-label">Request preview</div>
-          <pre className="code-block">{pretty(requestPreview)}</pre>
+        <div className="section-panels">
+          <div className="preview-panel">
+            <div className="summary-label">Request</div>
+            <pre className="code-block">{pretty(requestPreview)}</pre>
+          </div>
+          <ResponsePanel response={response} />
         </div>
       </div>
-    </article>
+    </details>
   );
 }
 
@@ -82,8 +127,8 @@ export default function App() {
   const [uploadObjectKey, setUploadObjectKey] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [inFlight, setInFlight] = useState(false);
-  const [lastRequest, setLastRequest] = useState(null);
-  const [lastResponse, setLastResponse] = useState(null);
+  const [requestLog, setRequestLog] = useState({});
+  const [responseLog, setResponseLog] = useState({});
 
   useEffect(() => {
     let ignore = false;
@@ -112,7 +157,6 @@ export default function App() {
         if (ignore) {
           return;
         }
-
         setRuntimeConfigError(error.message);
       }
     };
@@ -156,16 +200,19 @@ export default function App() {
     }
 
     setInFlight(true);
-    setLastRequest({
-      title,
-      method,
-      url,
-      headers: requestHeaders,
-      body:
-        file != null
-          ? { fileName: file.name, sizeBytes: file.size, type: file.type || "application/octet-stream" }
-          : body ?? null,
-    });
+    setRequestLog((current) => ({
+      ...current,
+      [title]: {
+        title,
+        method,
+        url,
+        headers: requestHeaders,
+        body:
+          file != null
+            ? { fileName: file.name, sizeBytes: file.size, type: file.type || "application/octet-stream" }
+            : body ?? null,
+      },
+    }));
 
     const startedAt = performance.now();
 
@@ -193,7 +240,10 @@ export default function App() {
         body: responseTransform ? responseTransform(payload) : payload,
       };
 
-      setLastResponse(normalized);
+      setResponseLog((current) => ({
+        ...current,
+        [title]: normalized,
+      }));
 
       if (!response.ok) {
         const error = new Error(`Request failed with ${response.status}`);
@@ -204,14 +254,17 @@ export default function App() {
       return normalized.body;
     } catch (error) {
       if (!error.response) {
-        setLastResponse({
-          title,
-          status: 0,
-          statusText: error.message,
-          durationMs: Math.round(performance.now() - startedAt),
-          headers: {},
-          body: error.message,
-        });
+        setResponseLog((current) => ({
+          ...current,
+          [title]: {
+            title,
+            status: 0,
+            statusText: error.message,
+            durationMs: Math.round(performance.now() - startedAt),
+            headers: {},
+            body: error.message,
+          },
+        }));
       }
       throw error;
     } finally {
@@ -221,7 +274,7 @@ export default function App() {
 
   const login = async () => {
     const body = await performRequest({
-      title: "Login",
+      title: "Load Session",
       method: "POST",
       path: "/api/auth/login",
       body: {
@@ -239,7 +292,7 @@ export default function App() {
 
   const refresh = async () => {
     const body = await performRequest({
-      title: "Refresh Tokens",
+      title: "Refresh Session",
       method: "POST",
       path: "/api/auth/refresh",
       body: {
@@ -334,12 +387,13 @@ export default function App() {
     }
   };
 
-  const requestCards = [
+  const sections = [
     {
-      title: "Login",
+      title: "Load Session",
       method: "POST",
       path: "/api/auth/login",
-      description: "Exchange demo credentials for access and refresh tokens.",
+      description: "Fetch access and refresh tokens using the demo session credentials.",
+      defaultOpen: true,
       requestPreview: {
         method: "POST",
         url: `${normalizeBaseUrl(baseUrl)}/api/auth/login`,
@@ -351,11 +405,11 @@ export default function App() {
       },
       actions: (
         <button className="primary-button" onClick={login} disabled={inFlight}>
-          Login
+          Load Session
         </button>
       ),
       fields: (
-        <div className="form-grid">
+        <div className="session-fields">
           <div className="form-field">
             <label>Username</label>
             <input
@@ -377,19 +431,19 @@ export default function App() {
       ),
     },
     {
-      title: "Refresh Tokens",
+      title: "Refresh Session",
       method: "POST",
       path: "/api/auth/refresh",
-      description: "Rotate the access token using the current refresh token.",
+      description: "Rotate the access token using the stored refresh token.",
       requestPreview: {
         method: "POST",
         url: `${normalizeBaseUrl(baseUrl)}/api/auth/refresh`,
         headers: { "Content-Type": "application/json" },
-        body: { refreshToken: auth.refreshToken || "replace-with-refresh-token" },
+        body: { refreshToken: auth.refreshToken ? "<stored>" : "<missing>" },
       },
       actions: (
         <button className="secondary-button" onClick={refresh} disabled={inFlight || !auth.refreshToken}>
-          Refresh
+          Refresh Session
         </button>
       ),
     },
@@ -397,12 +451,13 @@ export default function App() {
       title: "Create Scan",
       method: "POST",
       path: "/api/create-scan",
-      description: "Creates the scan and returns the presigned upload URL.",
+      description: "Create a scan and get the presigned upload URL.",
+      defaultOpen: true,
       requestPreview: {
         method: "POST",
         url: `${normalizeBaseUrl(baseUrl)}/api/create-scan`,
         headers: {
-          Authorization: auth.accessToken ? "Bearer <access-token>" : "Bearer <missing>",
+          Authorization: auth.accessToken ? "Bearer <stored>" : "Bearer <missing>",
           "Content-Type": "application/json",
         },
         body: {
@@ -431,11 +486,12 @@ export default function App() {
                 onChange={(event) => setScan((current) => ({ ...current, scanId: event.target.value }))}
               />
               <button
-                className="secondary-button"
+                className="icon-button"
                 type="button"
                 onClick={() => setScan((current) => ({ ...current, scanId: randomScanId() }))}
+                title="Generate random scan ID"
               >
-                Random
+                New
               </button>
             </div>
           </div>
@@ -494,7 +550,7 @@ export default function App() {
       title: "Upload Scan Archive",
       method: "PUT",
       path: "presigned-upload-url",
-      description: "Uploads the selected file to S3 using the URL returned by create-scan.",
+      description: "Upload the archive to S3 using the URL returned from create-scan.",
       requestPreview: {
         method: "PUT",
         url: uploadUrl || "paste-from-create-scan-response",
@@ -536,12 +592,12 @@ export default function App() {
       title: "Start Scan",
       method: "POST",
       path: "/api/start-scan",
-      description: "Queues the Step Functions workflow after the file is uploaded.",
+      description: "Queue the scan workflow after the file upload completes.",
       requestPreview: {
         method: "POST",
         url: `${normalizeBaseUrl(baseUrl)}/api/start-scan`,
         headers: {
-          Authorization: auth.accessToken ? "Bearer <access-token>" : "Bearer <missing>",
+          Authorization: auth.accessToken ? "Bearer <stored>" : "Bearer <missing>",
           "Content-Type": "application/json",
         },
         body: { scanId: scan.scanId },
@@ -556,14 +612,14 @@ export default function App() {
       title: "List Scans",
       method: "GET",
       path: `/api/accounts/${scan.accountId || "{accountId}"}/scans?limit=50`,
-      description: "Lists recent scans for the configured account.",
+      description: "List recent scans for the current account.",
       requestPreview: {
         method: "GET",
         url: `${normalizeBaseUrl(baseUrl)}/api/accounts/${encodeURIComponent(scan.accountId)}/scans?limit=50`,
       },
       actions: (
         <button className="secondary-button" onClick={listScans} disabled={inFlight}>
-          List
+          List Scans
         </button>
       ),
     },
@@ -571,7 +627,7 @@ export default function App() {
       title: "Get Scan Status",
       method: "GET",
       path: `/api/scans/${scan.scanId || "{scanId}"}/status`,
-      description: "Returns the current workflow status for the scan.",
+      description: "Return the current workflow status for the scan.",
       requestPreview: {
         method: "GET",
         url: `${normalizeBaseUrl(baseUrl)}/api/scans/${encodeURIComponent(scan.scanId)}/status`,
@@ -586,7 +642,7 @@ export default function App() {
       title: "Get Scan Findings",
       method: "GET",
       path: `/api/scans/${scan.scanId || "{scanId}"}/findings`,
-      description: "Returns merged findings. If one engine failed, successful engine findings still appear here.",
+      description: "Return merged findings. Successful engine output can still appear even when overall status is FAILED.",
       requestPreview: {
         method: "GET",
         url: `${normalizeBaseUrl(baseUrl)}/api/scans/${encodeURIComponent(scan.scanId)}/findings`,
@@ -601,17 +657,17 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div>
+      <header className="hero-panel">
+        <div className="hero-copy">
           <h1 className="app-title">QCA API Explorer</h1>
           <p className="app-subtitle">
-            React UI for running the auth, scan, upload, status, and findings workflow from one screen. Each action
-            shows the exact request payload, response time, and last response body.
+            Use a single page to create a session, create a scan, upload the archive, start the workflow, and inspect
+            status or findings. Each request keeps its own request and response history.
           </p>
         </div>
-        <div className="app-meta">
+        <div className="hero-meta">
           <div className="summary-card">
-            <span className="summary-label">Access Token</span>
+            <span className="summary-label">Session</span>
             <div className="summary-value">{auth.accessToken ? "Loaded" : "Not loaded"}</div>
           </div>
           <div className="summary-card">
@@ -625,8 +681,8 @@ export default function App() {
         </div>
       </header>
 
-      <section className="toolbar-card">
-        <div className="toolbar">
+      <section className="top-bar">
+        <div className="top-bar-grid">
           <div className="toolbar-field">
             <label>Environment</label>
             <select
@@ -638,122 +694,85 @@ export default function App() {
               <option value="">Select environment</option>
               {Object.entries(runtimeConfig?.environments || {}).map(([envName, config]) => (
                 <option key={envName} value={envName}>
-                  {envName} - {config.apiBaseUrl}
+                  {envName}
                 </option>
               ))}
             </select>
           </div>
-          <div className="toolbar-field">
+          <div className="toolbar-field toolbar-span-2">
             <label>Base URL</label>
             <input className="text-input" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
           </div>
           <div className="toolbar-field">
-            <label>Access Token</label>
+            <label>Session Password</label>
             <input
+              type="password"
               className="text-input"
-              value={auth.accessToken}
-              onChange={(event) => setAuth((current) => ({ ...current, accessToken: event.target.value }))}
+              value={auth.password}
+              onChange={(event) => setAuth((current) => ({ ...current, password: event.target.value }))}
+              placeholder="Demo session password"
             />
           </div>
-          <div className="toolbar-field">
-            <label>Refresh Token</label>
-            <input
-              className="text-input"
-              value={auth.refreshToken}
-              onChange={(event) => setAuth((current) => ({ ...current, refreshToken: event.target.value }))}
-            />
+          <div className="toolbar-actions">
+            <button className="primary-button" type="button" onClick={login} disabled={inFlight}>
+              Load Session
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={refresh}
+              disabled={inFlight || !auth.refreshToken}
+            >
+              Refresh
+            </button>
           </div>
         </div>
-        {runtimeConfigError ? (
-          <div className="small-note">runtime-config.json not loaded: {runtimeConfigError}</div>
-        ) : null}
+        {runtimeConfigError ? <div className="small-note">runtime-config.json not loaded: {runtimeConfigError}</div> : null}
       </section>
 
-      <div className="app-grid">
-        <div className="left-column">
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2 className="panel-title">Request Sections</h2>
-                <p className="panel-description">
-                  Swagger-style workflow cards with editable payload fields and direct actions.
-                </p>
-              </div>
-              <div className="status-row">
-                <span className={`status-pill ${inFlight ? "warning" : "success"}`}>
-                  {inFlight ? "Request in progress" : "Idle"}
-                </span>
-              </div>
-            </div>
-
-            <div className="request-list">
-              {requestCards.map((card) => (
-                <RequestCard key={card.title} {...card} />
-              ))}
-            </div>
-          </section>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2 className="panel-title">Requests</h2>
+            <p className="panel-description">Each section sends one request and keeps its own response panel.</p>
+          </div>
+          <span className={`status-pill ${inFlight ? "warning" : "success"}`}>
+            {inFlight ? "Request in progress" : "Idle"}
+          </span>
         </div>
 
-        <div className="right-column">
-          <section className="response-card">
-            <div className="panel-header">
-              <div>
-                <h2 className="panel-title">Response Section</h2>
-                <p className="panel-description">Most recent request and response, including timing.</p>
-              </div>
-              {lastResponse ? (
-                <button className="ghost-button" onClick={() => copyJson(lastResponse.body)}>
-                  Copy Body
-                </button>
-              ) : null}
-            </div>
-
-            {lastResponse ? (
-              <div className="response-meta">
-                <span className={`response-stat ${statusTone(lastResponse.status)}`}>
-                  Status {lastResponse.status || "ERR"} {lastResponse.statusText || ""}
-                </span>
-                <span className="response-stat">{lastResponse.durationMs} ms</span>
-                <span className="response-stat">{lastResponse.title}</span>
-              </div>
-            ) : (
-              <p className="muted-text">Run any request from the left side to populate this panel.</p>
-            )}
-
-            <div className="section-grid">
-              <div>
-                <div className="summary-label">Last request</div>
-                <pre className="code-block">{pretty(lastRequest || { message: "No request sent yet." })}</pre>
-              </div>
-              <div>
-                <div className="summary-label">Last response</div>
-                <pre className="code-block">{pretty(lastResponse || { message: "No response yet." })}</pre>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <h2 className="panel-title">Workflow Notes</h2>
-                <p className="panel-description">Useful behavior in the current backend flow.</p>
-              </div>
-            </div>
-            <ul className="hint-list">
-              <li>Create scan first. The API returns the presigned upload URL needed for file upload.</li>
-              <li>Upload must finish before starting the scan workflow.</li>
-              <li>Each worker has a 3 minute Step Functions timeout.</li>
-              <li>
-                If one engine succeeds and the other fails, status becomes <code>FAILED</code> but findings can still
-                return the successful engine output.
-              </li>
-              <li>
-                Requests include <code>X-Trace-Id</code> and <code>X-Span-Id</code> in responses for log correlation.
-              </li>
-            </ul>
-          </section>
+        <div className="request-list">
+          {sections.map((section) => (
+            <RequestSection
+              key={section.title}
+              {...section}
+              response={responseLog[section.title]}
+              requestPreview={requestLog[section.title] || section.requestPreview}
+            />
+          ))}
         </div>
-      </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2 className="panel-title">Workflow Notes</h2>
+            <p className="panel-description">Current backend behavior that matters while testing.</p>
+          </div>
+        </div>
+        <ul className="hint-list">
+          <li>Create the scan first. That response contains the presigned upload URL.</li>
+          <li>Upload must finish before starting the workflow.</li>
+          <li>Each worker branch has a 3 minute Step Functions timeout.</li>
+          <li>
+            If one engine succeeds and the other fails, overall status can be <code>FAILED</code> while findings still
+            return the successful engine output.
+          </li>
+          <li>
+            Responses include <code>X-Trace-Id</code> and <code>X-Span-Id</code> for log correlation.
+          </li>
+        </ul>
+      </section>
     </div>
   );
 }
