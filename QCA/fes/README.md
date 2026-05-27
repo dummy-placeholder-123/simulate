@@ -2,6 +2,44 @@
 
 Spring Boot API for creating scans, starting scan execution, and reading scan status and findings.
 
+## API Explorer UI
+
+FES now serves a React app at:
+
+```text
+GET /
+```
+
+The UI includes:
+
+- login and refresh token actions
+- create-scan form with random scan ID generation
+- archive upload using the presigned URL from `create-scan`
+- start-scan, list, status, and findings actions
+- request preview and response panel
+- response timing in milliseconds
+
+Source:
+
+```text
+QCA/fes/frontend
+```
+
+Frontend commands:
+
+```sh
+cd QCA/fes/frontend
+npm install
+npm run dev
+npm run build
+```
+
+`npm run build` writes the compiled assets into:
+
+```text
+QCA/fes/src/main/resources/static
+```
+
 ## Authentication
 
 Mutating APIs require a bearer access token.
