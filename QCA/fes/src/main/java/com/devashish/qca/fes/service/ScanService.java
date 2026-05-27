@@ -8,8 +8,10 @@ import com.devashish.qca.fes.dto.ScanStatusResponse;
 import com.devashish.qca.fes.dto.StartScanRequest;
 import com.devashish.qca.fes.dto.StartScanResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -167,29 +169,30 @@ public class ScanService {
         }
 
         String resultBucketName = stringAttribute(scanItem, "resultBucketName", scanUploadBucketName);
-        String resultObjectKey = stringAttribute(scanItem, "resultObjectKey", null);
-        if (!hasText(resultObjectKey)) {
+        String mergedResultObjectKey = stringAttribute(scanItem, "resultObjectKey", null);
+        String standardResultObjectKey = stringAttribute(scanItem, "standardResultObjectKey", null);
+        String llmResultObjectKey = stringAttribute(scanItem, "llmResultObjectKey", null);
+        if (!hasText(standardResultObjectKey) || !hasText(llmResultObjectKey)) {
             throw new IllegalArgumentException("scan findings are not available yet");
         }
 
         try {
-            JsonNode findings = objectMapper.readTree(s3Client.getObjectAsBytes(GetObjectRequest.builder()
-                            .bucket(resultBucketName)
-                            .key(resultObjectKey)
-                            .build())
-                    .asByteArray());
-            log.info("getScanFindings scanId={} bucket={} key={}", scanId, resultBucketName, resultObjectKey);
+            JsonNode standardFindings = readFindingsDocument(resultBucketName, standardResultObjectKey);
+            JsonNode llmFindings = readFindingsDocument(resultBucketName, llmResultObjectKey);
+            JsonNode mergedFindings = mergeFindings(scanId, resultBucketName, mergedResultObjectKey, standardFindings, llmFindings);
+            log.info("getScanFindings scanId={} bucket={} standardKey={} llmKey={}",
+                    scanId, resultBucketName, standardResultObjectKey, llmResultObjectKey);
 
             return new ScanFindingsResponse(
                     scanId,
                     stringAttribute(scanItem, "status", null),
                     resultBucketName,
-                    resultObjectKey,
-                    findings);
+                    mergedResultObjectKey,
+                    mergedFindings);
         } catch (NoSuchKeyException e) {
             throw new IllegalArgumentException("scan findings file not found");
         } catch (Exception e) {
-            log.error("getScanFindings failed scanId={} bucket={} key={}", scanId, resultBucketName, resultObjectKey, e);
+            log.error("getScanFindings failed scanId={} bucket={} mergedKey={}", scanId, resultBucketName, mergedResultObjectKey, e);
             throw new IllegalStateException("failed to read scan findings", e);
         }
     }
@@ -287,6 +290,8 @@ public class ScanService {
         item.put("uploadObjectKey", stringValue(uploadObjectKey(request, scanId)));
         item.put("resultBucketName", stringValue(scanUploadBucketName));
         item.put("resultObjectKey", stringValue(resultObjectKey(request, scanId)));
+        item.put("standardResultObjectKey", stringValue(standardResultObjectKey(request, scanId)));
+        item.put("llmResultObjectKey", stringValue(llmResultObjectKey(request, scanId)));
 
         dynamoDbClient.putItem(PutItemRequest.builder()
                 .tableName(scanTableName)
@@ -320,6 +325,8 @@ public class ScanService {
         message.put("uploadObjectKey", stringAttribute(scanItem, "uploadObjectKey", null));
         message.put("resultBucketName", stringAttribute(scanItem, "resultBucketName", scanUploadBucketName));
         message.put("resultObjectKey", stringAttribute(scanItem, "resultObjectKey", null));
+        message.put("standardResultObjectKey", stringAttribute(scanItem, "standardResultObjectKey", null));
+        message.put("llmResultObjectKey", stringAttribute(scanItem, "llmResultObjectKey", null));
         message.put("queuedAt", queuedAt);
 
         sfnClient.startExecution(StartExecutionRequest.builder()
@@ -393,7 +400,55 @@ public class ScanService {
         return "scans/%s/%s/findings.json".formatted(request.accountId(), scanId);
     }
 
+    private String standardResultObjectKey(ScanRequest request, String scanId) {
+        return "scans/%s/%s/standard-findings.json".formatted(request.accountId(), scanId);
+    }
+
+    private String llmResultObjectKey(ScanRequest request, String scanId) {
+        return "scans/%s/%s/llm-findings.json".formatted(request.accountId(), scanId);
+    }
+
     private record PresignedUpload(String url, String expiresAt) {
+    }
+
+    private JsonNode readFindingsDocument(String bucketName, String objectKey) {
+        return objectMapper.readTree(s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                        .bucket(bucketName)
+                        .key(objectKey)
+                        .build())
+                .asByteArray());
+    }
+
+    private JsonNode mergeFindings(
+            String scanId,
+            String resultBucketName,
+            String mergedResultObjectKey,
+            JsonNode standardFindings,
+            JsonNode llmFindings) {
+        ObjectNode merged = objectMapper.createObjectNode();
+        merged.put("scanId", scanId);
+        merged.put("status", "COMPLETED");
+        merged.put("resultBucketName", resultBucketName);
+        merged.put("resultObjectKey", mergedResultObjectKey);
+
+        ObjectNode engines = merged.putObject("engines");
+        engines.set("standard", standardFindings);
+        engines.set("llm", llmFindings);
+
+        ArrayNode findings = merged.putArray("findings");
+        appendFindings(findings, standardFindings.path("findings"));
+        appendFindings(findings, llmFindings.path("findings"));
+        return merged;
+    }
+
+    private void appendFindings(ArrayNode target, JsonNode findingsNode) {
+        if (findingsNode == null || !findingsNode.isArray()) {
+            return;
+        }
+
+        for (JsonNode finding : findingsNode) {
+            target.add(finding);
+        }
     }
 
     private ScanListResponse scanResponseFromItem(Map<String, AttributeValue> item) {

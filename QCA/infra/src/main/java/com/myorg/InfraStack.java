@@ -69,6 +69,9 @@ import software.amazon.awscdk.services.iam.ManagedPolicy;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
+import software.amazon.awscdk.services.lambda.Code;
+import software.amazon.awscdk.services.lambda.Function;
+import software.amazon.awscdk.services.lambda.Runtime;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.s3.BlockPublicAccess;
@@ -88,6 +91,8 @@ import software.amazon.awscdk.services.stepfunctions.StateMachine;
 import software.amazon.awscdk.services.stepfunctions.StateMachineType;
 import software.amazon.awscdk.services.stepfunctions.TaskInput;
 import software.amazon.awscdk.services.stepfunctions.Timeout;
+import software.amazon.awscdk.services.stepfunctions.Parallel;
+import software.amazon.awscdk.services.stepfunctions.tasks.LambdaInvoke;
 import software.amazon.awscdk.services.stepfunctions.tasks.SqsSendMessage;
 import software.constructs.Construct;
 
@@ -101,14 +106,18 @@ public class InfraStack extends Stack {
         String stage = StageConfig.stage(getNode().tryGetContext("stage"));
         String resourcePrefix = StageConfig.resourcePrefix(stage);
         String engineLogGroupName = "prod".equals(stage) ? "/qca/engine" : "/qca/" + stage + "/engine";
+        String llmEngineLogGroupName = "prod".equals(stage) ? "/qca/llm-engine" : "/qca/" + stage + "/llm-engine";
         String fesLogGroupName = "prod".equals(stage) ? "/qca/fes" : "/qca/" + stage + "/fes";
         String scanQueueName = resourcePrefix + "-scan-queue";
+        String llmScanQueueName = resourcePrefix + "-llm-scan-queue";
         String scanUploadBucketName = resourcePrefix + "-scan-uploads-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
         String scanTableName = resourcePrefix + "-scans";
         String fesConfigPathPrefix = "/qca/" + stage + "/fes";
         boolean isProd = "prod".equals(stage);
         int engineDesiredCount = isProd ? 1 : 0;
         int engineMinCapacity = isProd ? 1 : 0;
+        int llmEngineDesiredCount = isProd ? 1 : 0;
+        int llmEngineMinCapacity = isProd ? 1 : 0;
         int fesDesiredCount = isProd ? 2 : 0;
         int fesMinCapacity = isProd ? 2 : 0;
 
@@ -176,11 +185,26 @@ public class InfraStack extends Stack {
                         .build())
                 .build();
 
-        SqsSendMessage sendScanToQueue = SqsSendMessage.Builder.create(this, "SendScanToQueue")
+        Queue llmScanDlq = Queue.Builder.create(this, "LlmScanDeadLetterQueue")
+                .queueName(resourcePrefix + "-llm-scan-dlq")
+                .retentionPeriod(Duration.days(1))
+                .build();
+
+        Queue llmScanQueue = Queue.Builder.create(this, "LlmScanQueue")
+                .queueName(llmScanQueueName)
+                .visibilityTimeout(Duration.minutes(6))
+                .retentionPeriod(Duration.days(1))
+                .deadLetterQueue(DeadLetterQueue.builder()
+                        .queue(llmScanDlq)
+                        .maxReceiveCount(3)
+                        .build())
+                .build();
+
+        SqsSendMessage sendStandardScanToQueue = SqsSendMessage.Builder.create(this, "SendStandardScanToQueue")
                 .queue(scanQueue)
                 .integrationPattern(IntegrationPattern.WAIT_FOR_TASK_TOKEN)
                 .taskTimeout(Timeout.duration(Duration.minutes(6)))
-                .resultPath("$.workerResult")
+                .resultPath("$.standardWorkerResult")
                 .messageBody(TaskInput.fromObject(Map.ofEntries(
                         Map.entry("taskToken", JsonPath.getTaskToken()),
                         Map.entry("eventType", JsonPath.stringAt("$.eventType")),
@@ -194,13 +218,66 @@ public class InfraStack extends Stack {
                         Map.entry("uploadBucketName", JsonPath.stringAt("$.uploadBucketName")),
                         Map.entry("uploadObjectKey", JsonPath.stringAt("$.uploadObjectKey")),
                         Map.entry("resultBucketName", JsonPath.stringAt("$.resultBucketName")),
-                        Map.entry("resultObjectKey", JsonPath.stringAt("$.resultObjectKey")),
+                        Map.entry("resultObjectKey", JsonPath.stringAt("$.standardResultObjectKey")),
                         Map.entry("queuedAt", JsonPath.stringAt("$.queuedAt")))))
+                .build();
+
+        SqsSendMessage sendLlmScanToQueue = SqsSendMessage.Builder.create(this, "SendLlmScanToQueue")
+                .queue(llmScanQueue)
+                .integrationPattern(IntegrationPattern.WAIT_FOR_TASK_TOKEN)
+                .taskTimeout(Timeout.duration(Duration.minutes(6)))
+                .resultPath("$.llmWorkerResult")
+                .messageBody(TaskInput.fromObject(Map.ofEntries(
+                        Map.entry("taskToken", JsonPath.getTaskToken()),
+                        Map.entry("eventType", JsonPath.stringAt("$.eventType")),
+                        Map.entry("scanId", JsonPath.stringAt("$.scanId")),
+                        Map.entry("accountId", JsonPath.stringAt("$.accountId")),
+                        Map.entry("repoFullName", JsonPath.stringAt("$.repoFullName")),
+                        Map.entry("prNumber", JsonPath.numberAt("$.prNumber")),
+                        Map.entry("headSha", JsonPath.stringAt("$.headSha")),
+                        Map.entry("useCase", JsonPath.stringAt("$.useCase")),
+                        Map.entry("service", JsonPath.stringAt("$.service")),
+                        Map.entry("uploadBucketName", JsonPath.stringAt("$.uploadBucketName")),
+                        Map.entry("uploadObjectKey", JsonPath.stringAt("$.uploadObjectKey")),
+                        Map.entry("resultBucketName", JsonPath.stringAt("$.resultBucketName")),
+                        Map.entry("resultObjectKey", JsonPath.stringAt("$.llmResultObjectKey")),
+                        Map.entry("queuedAt", JsonPath.stringAt("$.queuedAt")))))
+                .build();
+
+        Function findingsAggregator = Function.Builder.create(this, "FindingsAggregatorFunction")
+                .functionName(resourcePrefix + "-findings-aggregator")
+                .runtime(Runtime.PYTHON_3_12)
+                .handler("index.handler")
+                .code(Code.fromAsset("lambda/aggregate-findings"))
+                .timeout(Duration.minutes(1))
+                .environment(Map.of(
+                        "SCAN_TABLE_NAME", scanTableName))
+                .build();
+
+        scanUploadBucket.grantReadWrite(findingsAggregator);
+        scanTable.grantReadWriteData(findingsAggregator);
+
+        Parallel runScanWorkers = Parallel.Builder.create(this, "RunScanWorkers")
+                .resultPath("$.engineResults")
+                .build();
+        runScanWorkers.branch(sendStandardScanToQueue);
+        runScanWorkers.branch(sendLlmScanToQueue);
+
+        LambdaInvoke aggregateFindings = LambdaInvoke.Builder.create(this, "AggregateFindings")
+                .lambdaFunction(findingsAggregator)
+                .payload(TaskInput.fromObject(Map.ofEntries(
+                        Map.entry("scanId", JsonPath.stringAt("$.scanId")),
+                        Map.entry("accountId", JsonPath.stringAt("$.accountId")),
+                        Map.entry("resultBucketName", JsonPath.stringAt("$.resultBucketName")),
+                        Map.entry("resultObjectKey", JsonPath.stringAt("$.resultObjectKey")),
+                        Map.entry("standardResultObjectKey", JsonPath.stringAt("$.standardResultObjectKey")),
+                        Map.entry("llmResultObjectKey", JsonPath.stringAt("$.llmResultObjectKey")))))
+                .resultPath("$.aggregationResult")
                 .build();
 
         StateMachine scanStateMachine = StateMachine.Builder.create(this, "ScanStateMachine")
                 .stateMachineName(resourcePrefix + "-scan-state-machine")
-                .definitionBody(DefinitionBody.fromChainable(sendScanToQueue))
+                .definitionBody(DefinitionBody.fromChainable(runScanWorkers.next(aggregateFindings)))
                 .stateMachineType(StateMachineType.STANDARD)
                 .build();
 
@@ -281,6 +358,12 @@ public class InfraStack extends Stack {
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
 
+        LogGroup llmEngineLogGroup = LogGroup.Builder.create(this, "LlmEngineLogGroup")
+                .logGroupName(llmEngineLogGroupName)
+                .retention(RetentionDays.ONE_DAY)
+                .removalPolicy(RemovalPolicy.DESTROY)
+                .build();
+
         LogGroup fesLogGroup = LogGroup.Builder.create(this, "FesLogGroup")
                 .logGroupName(fesLogGroupName)
                 .retention(RetentionDays.ONE_DAY)
@@ -309,6 +392,12 @@ public class InfraStack extends Stack {
                         "AmazonECSInfrastructureRolePolicyForLoadBalancers")))
                 .build();
 
+        Role llmEngineExecutionRole = Role.Builder.create(this, "LlmEngineTaskExecutionRole")
+                .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
+                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
+                        "service-role/AmazonECSTaskExecutionRolePolicy")))
+                .build();
+
         FargateTaskDefinition engineTaskDefinition = FargateTaskDefinition.Builder.create(this, "EngineTaskDefinition")
                 .family(resourcePrefix + "-engine")
                 .cpu(256)
@@ -325,6 +414,17 @@ public class InfraStack extends Stack {
                 .cpu(512)
                 .memoryLimitMiB(1024)
                 .executionRole(fesExecutionRole)
+                .runtimePlatform(RuntimePlatform.builder()
+                        .cpuArchitecture(CpuArchitecture.X86_64)
+                        .operatingSystemFamily(OperatingSystemFamily.LINUX)
+                        .build())
+                .build();
+
+        FargateTaskDefinition llmEngineTaskDefinition = FargateTaskDefinition.Builder.create(this, "LlmEngineTaskDefinition")
+                .family(resourcePrefix + "-llm-engine")
+                .cpu(256)
+                .memoryLimitMiB(512)
+                .executionRole(llmEngineExecutionRole)
                 .runtimePlatform(RuntimePlatform.builder()
                         .cpuArchitecture(CpuArchitecture.X86_64)
                         .operatingSystemFamily(OperatingSystemFamily.LINUX)
@@ -354,6 +454,34 @@ public class InfraStack extends Stack {
                         "SCAN_TABLE_NAME", scanTableName,
                         "SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName,
                         "SCAN_RESULT_BUCKET_NAME", scanUploadBucketName,
+                        "WORKER_KIND", "STANDARD",
+                        "PROCESSING_SECONDS", "60"))
+                .build());
+
+        llmScanQueue.grantConsumeMessages(llmEngineTaskDefinition.getTaskRole());
+        scanUploadBucket.grantReadWrite(llmEngineTaskDefinition.getTaskRole());
+        scanTable.grantWriteData(llmEngineTaskDefinition.getTaskRole());
+        llmEngineTaskDefinition.getTaskRole().addToPrincipalPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "states:SendTaskSuccess",
+                        "states:SendTaskFailure",
+                        "states:SendTaskHeartbeat"))
+                .resources(List.of("*"))
+                .build());
+
+        llmEngineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
+                .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
+                .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
+                        .logGroup(llmEngineLogGroup)
+                        .streamPrefix("llm-engine")
+                        .build()))
+                .environment(Map.of(
+                        "AWS_REGION", StageConfig.AWS_REGION,
+                        "SCAN_QUEUE_URL", llmScanQueue.getQueueUrl(),
+                        "SCAN_TABLE_NAME", scanTableName,
+                        "SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName,
+                        "SCAN_RESULT_BUCKET_NAME", scanUploadBucketName,
+                        "WORKER_KIND", "LLM",
                         "PROCESSING_SECONDS", "60"))
                 .build());
 
@@ -402,6 +530,21 @@ public class InfraStack extends Stack {
                 .cluster(cluster)
                 .taskDefinition(engineTaskDefinition)
                 .desiredCount(engineDesiredCount)
+                .assignPublicIp(true)
+                .circuitBreaker(DeploymentCircuitBreaker.builder()
+                        .rollback(true)
+                        .build())
+                .minHealthyPercent(100)
+                .vpcSubnets(SubnetSelection.builder()
+                        .subnetType(SubnetType.PUBLIC)
+                        .build())
+                .build();
+
+        FargateService llmEngineService = FargateService.Builder.create(this, "LlmEngineService")
+                .serviceName(resourcePrefix + "-llm-engine-service")
+                .cluster(cluster)
+                .taskDefinition(llmEngineTaskDefinition)
+                .desiredCount(llmEngineDesiredCount)
                 .assignPublicIp(true)
                 .circuitBreaker(DeploymentCircuitBreaker.builder()
                         .rollback(true)
@@ -592,6 +735,37 @@ public class InfraStack extends Stack {
                 .minCapacity(fesMinCapacity)
                 .maxCapacity(5)
                 .build());
+
+        ScalableTaskCount llmEngineScaling = llmEngineService.autoScaleTaskCount(EnableScalingProps.builder()
+                .minCapacity(llmEngineMinCapacity)
+                .maxCapacity(5)
+                .build());
+
+        llmEngineScaling.scaleOnMetric("LlmQueueDepthScaling",
+                software.amazon.awscdk.services.applicationautoscaling.BasicStepScalingPolicyProps.builder()
+                        .metric(Metric.Builder.create()
+                                .namespace("AWS/SQS")
+                                .metricName("ApproximateNumberOfMessagesVisible")
+                                .dimensionsMap(Map.of("QueueName", llmScanQueueName))
+                                .statistic("Average")
+                                .period(Duration.minutes(1))
+                                .build())
+                        .scalingSteps(List.of(
+                                software.amazon.awscdk.services.applicationautoscaling.ScalingInterval.builder()
+                                        .upper(0)
+                                        .change(-1)
+                                        .build(),
+                                software.amazon.awscdk.services.applicationautoscaling.ScalingInterval.builder()
+                                        .lower(1)
+                                        .change(+1)
+                                        .build(),
+                                software.amazon.awscdk.services.applicationautoscaling.ScalingInterval.builder()
+                                        .lower(10)
+                                        .change(+2)
+                                        .build()))
+                        .adjustmentType(software.amazon.awscdk.services.applicationautoscaling.AdjustmentType.CHANGE_IN_CAPACITY)
+                        .cooldown(Duration.minutes(1))
+                        .build());
 
         fesScaling.scaleOnCpuUtilization("FesCpuScaling",
                 CpuUtilizationScalingProps.builder()

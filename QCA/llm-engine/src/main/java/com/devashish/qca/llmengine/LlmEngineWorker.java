@@ -1,4 +1,4 @@
-package com.devashish.qca.engine;
+package com.devashish.qca.llmengine;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -33,8 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-public class EngineWorker {
-    private static final Logger LOGGER = LoggerFactory.getLogger(EngineWorker.class);
+public class LlmEngineWorker {
+    private static final Logger LOGGER = LoggerFactory.getLogger(LlmEngineWorker.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final SqsClient sqsClient;
@@ -43,7 +43,7 @@ public class EngineWorker {
     private final SfnClient sfnClient;
     private final WorkerConfig config;
 
-    public EngineWorker(
+    public LlmEngineWorker(
             SqsClient sqsClient,
             S3Client s3Client,
             DynamoDbClient dynamoDbClient,
@@ -64,12 +64,12 @@ public class EngineWorker {
              S3Client s3Client = S3Client.builder().region(region).build();
              DynamoDbClient dynamoDbClient = DynamoDbClient.builder().region(region).build();
              SfnClient sfnClient = SfnClient.builder().region(region).build()) {
-            new EngineWorker(sqsClient, s3Client, dynamoDbClient, sfnClient, config).run();
+            new LlmEngineWorker(sqsClient, s3Client, dynamoDbClient, sfnClient, config).run();
         }
     }
 
     public void run() {
-        LOGGER.info("Starting engine worker id={} queue={}", config.workerId(), config.scanQueueUrl());
+        LOGGER.info("Starting llm engine worker id={} queue={}", config.workerId(), config.scanQueueUrl());
 
         while (!Thread.currentThread().isInterrupted()) {
             List<Message> messages = receiveMessages();
@@ -176,7 +176,7 @@ public class EngineWorker {
                         "severity", "INFO",
                         "source", config.workerKind(),
                         "title", config.workerKind() + " scan completed",
-                        "description", config.workerKind() + " engine processed the uploaded archive successfully."))));
+                        "description", config.workerKind() + " engine processed the uploaded archive with its own execution flow."))));
 
         s3Client.putObject(PutObjectRequest.builder()
                         .bucket(resultBucketName)
@@ -351,7 +351,7 @@ public class EngineWorker {
                     requiredEnv("SCAN_QUEUE_URL"),
                     env("SCAN_TABLE_NAME", "qca-scans"),
                     env("SCAN_RESULT_BUCKET_NAME", requiredEnv("SCAN_UPLOAD_BUCKET_NAME")),
-                    env("WORKER_KIND", "STANDARD"),
+                    env("WORKER_KIND", "LLM"),
                     env("WORKER_ID", defaultWorkerId()),
                     Duration.ofSeconds(Long.parseLong(env("PROCESSING_SECONDS", "60"))));
         }
@@ -373,7 +373,7 @@ public class EngineWorker {
             try {
                 return InetAddress.getLocalHost().getHostName();
             } catch (Exception e) {
-                return "engine-" + UUID.randomUUID();
+                return "llm-engine-" + UUID.randomUUID();
             }
         }
     }

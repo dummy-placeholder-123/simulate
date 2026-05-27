@@ -1,0 +1,7 @@
+# deployment.operation = deploy or push-only
+# tag = already-built image tag to deploy
+environment: prod
+deployment:
+  operation: deploy
+release-name: prod-pending
+tag: replace-with-agreed-deploy-tag
