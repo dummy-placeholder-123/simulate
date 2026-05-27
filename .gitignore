@@ -3,3 +3,5 @@ target
 .vscode
 cdk.out
 alb-requests.http
+node_modules
+dist
