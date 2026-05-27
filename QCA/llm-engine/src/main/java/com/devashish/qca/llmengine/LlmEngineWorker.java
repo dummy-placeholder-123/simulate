@@ -123,7 +123,7 @@ public class LlmEngineWorker {
         } catch (Exception e) {
             String failedAt = Instant.now().toString();
             try {
-                updateStatus(scanMessage.scanId(), "FAILED", "failedAt", failedAt, null, null, null);
+                updateFailureResult(scanMessage.scanId(), failedAt, e);
                 sendTaskFailure(scanMessage, e);
                 deleteMessage(message);
             } catch (Exception callbackException) {
@@ -241,6 +241,29 @@ public class LlmEngineWorker {
                 + enginePrefix + "InputObjectSizeBytes = :objectSize, "
                 + enginePrefix + "ResultBucketName = :resultBucketName, "
                 + enginePrefix + "ResultObjectKey = :resultObjectKey";
+
+        dynamoDbClient.updateItem(UpdateItemRequest.builder()
+                .tableName(config.scanTableName())
+                .key(Map.of("scanId", stringValue(scanId)))
+                .updateExpression(updateExpression)
+                .expressionAttributeNames(Map.of("#status", "status"))
+                .expressionAttributeValues(values)
+                .build());
+    }
+
+    private void updateFailureResult(String scanId, String failedAt, Exception exception) {
+        String enginePrefix = config.workerKind().equalsIgnoreCase("LLM") ? "llm" : "standard";
+        Map<String, AttributeValue> values = new java.util.HashMap<>();
+        values.put(":status", stringValue("FAILED"));
+        values.put(":failedAt", stringValue(failedAt));
+        values.put(":workerId", stringValue(config.workerId()));
+        values.put(":failureReason", stringValue(exception.getClass().getSimpleName()
+                + ": " + (exception.getMessage() == null ? "processing failed" : exception.getMessage())));
+
+        String updateExpression = "SET #status = :status, updatedAt = :failedAt, failedAt = :failedAt, "
+                + enginePrefix + "FailedAt = :failedAt, "
+                + enginePrefix + "WorkerId = :workerId, "
+                + enginePrefix + "FailureReason = :failureReason";
 
         dynamoDbClient.updateItem(UpdateItemRequest.builder()
                 .tableName(config.scanTableName())

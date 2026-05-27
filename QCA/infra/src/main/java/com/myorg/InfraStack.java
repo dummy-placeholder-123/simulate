@@ -87,6 +87,7 @@ import software.amazon.awscdk.services.sqs.Queue;
 import software.amazon.awscdk.services.stepfunctions.DefinitionBody;
 import software.amazon.awscdk.services.stepfunctions.IntegrationPattern;
 import software.amazon.awscdk.services.stepfunctions.JsonPath;
+import software.amazon.awscdk.services.stepfunctions.CatchProps;
 import software.amazon.awscdk.services.stepfunctions.StateMachine;
 import software.amazon.awscdk.services.stepfunctions.StateMachineType;
 import software.amazon.awscdk.services.stepfunctions.TaskInput;
@@ -203,7 +204,7 @@ public class InfraStack extends Stack {
         SqsSendMessage sendStandardScanToQueue = SqsSendMessage.Builder.create(this, "SendStandardScanToQueue")
                 .queue(scanQueue)
                 .integrationPattern(IntegrationPattern.WAIT_FOR_TASK_TOKEN)
-                .taskTimeout(Timeout.duration(Duration.minutes(6)))
+                .taskTimeout(Timeout.duration(Duration.minutes(3)))
                 .resultPath("$.standardWorkerResult")
                 .messageBody(TaskInput.fromObject(Map.ofEntries(
                         Map.entry("taskToken", JsonPath.getTaskToken()),
@@ -225,7 +226,7 @@ public class InfraStack extends Stack {
         SqsSendMessage sendLlmScanToQueue = SqsSendMessage.Builder.create(this, "SendLlmScanToQueue")
                 .queue(llmScanQueue)
                 .integrationPattern(IntegrationPattern.WAIT_FOR_TASK_TOKEN)
-                .taskTimeout(Timeout.duration(Duration.minutes(6)))
+                .taskTimeout(Timeout.duration(Duration.minutes(3)))
                 .resultPath("$.llmWorkerResult")
                 .messageBody(TaskInput.fromObject(Map.ofEntries(
                         Map.entry("taskToken", JsonPath.getTaskToken()),
@@ -263,6 +264,21 @@ public class InfraStack extends Stack {
         runScanWorkers.branch(sendStandardScanToQueue);
         runScanWorkers.branch(sendLlmScanToQueue);
 
+        LambdaInvoke finalizeFailedScan = LambdaInvoke.Builder.create(this, "FinalizeFailedScan")
+                .lambdaFunction(findingsAggregator)
+                .payload(TaskInput.fromObject(Map.ofEntries(
+                        Map.entry("scanId", JsonPath.stringAt("$.scanId")),
+                        Map.entry("accountId", JsonPath.stringAt("$.accountId")),
+                        Map.entry("resultBucketName", JsonPath.stringAt("$.resultBucketName")),
+                        Map.entry("resultObjectKey", JsonPath.stringAt("$.resultObjectKey")),
+                        Map.entry("standardResultObjectKey", JsonPath.stringAt("$.standardResultObjectKey")),
+                        Map.entry("llmResultObjectKey", JsonPath.stringAt("$.llmResultObjectKey")),
+                        Map.entry("finalStatus", "FAILED"),
+                        Map.entry("failureError", JsonPath.stringAt("$.workerFailure.Error")),
+                        Map.entry("failureCause", JsonPath.stringAt("$.workerFailure.Cause")))))
+                .resultPath("$.finalizationResult")
+                .build();
+
         LambdaInvoke aggregateFindings = LambdaInvoke.Builder.create(this, "AggregateFindings")
                 .lambdaFunction(findingsAggregator)
                 .payload(TaskInput.fromObject(Map.ofEntries(
@@ -274,6 +290,14 @@ public class InfraStack extends Stack {
                         Map.entry("llmResultObjectKey", JsonPath.stringAt("$.llmResultObjectKey")))))
                 .resultPath("$.aggregationResult")
                 .build();
+
+        runScanWorkers.addCatch(finalizeFailedScan, CatchProps.builder()
+                .resultPath("$.workerFailure")
+                .build());
+
+        aggregateFindings.addCatch(finalizeFailedScan, CatchProps.builder()
+                .resultPath("$.workerFailure")
+                .build());
 
         StateMachine scanStateMachine = StateMachine.Builder.create(this, "ScanStateMachine")
                 .stateMachineName(resourcePrefix + "-scan-state-machine")

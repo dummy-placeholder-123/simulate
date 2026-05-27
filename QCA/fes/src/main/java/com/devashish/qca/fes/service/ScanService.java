@@ -47,6 +47,8 @@ public class ScanService {
     private static final String QUEUED = "QUEUED";
     private static final String DUPLICATE = "DUPLICATE";
     private static final String COMPLETED = "COMPLETED";
+    private static final String STANDARD_ENGINE = "standard";
+    private static final String LLM_ENGINE = "llm";
 
     private final DynamoDbClient dynamoDbClient;
     private final S3Client s3Client;
@@ -172,13 +174,14 @@ public class ScanService {
         String mergedResultObjectKey = stringAttribute(scanItem, "resultObjectKey", null);
         String standardResultObjectKey = stringAttribute(scanItem, "standardResultObjectKey", null);
         String llmResultObjectKey = stringAttribute(scanItem, "llmResultObjectKey", null);
-        if (!hasText(standardResultObjectKey) || !hasText(llmResultObjectKey)) {
-            throw new IllegalArgumentException("scan findings are not available yet");
-        }
 
         try {
-            JsonNode standardFindings = readFindingsDocument(resultBucketName, standardResultObjectKey);
-            JsonNode llmFindings = readFindingsDocument(resultBucketName, llmResultObjectKey);
+            JsonNode standardFindings = readFindingsDocumentIfPresent(resultBucketName, standardResultObjectKey);
+            JsonNode llmFindings = readFindingsDocumentIfPresent(resultBucketName, llmResultObjectKey);
+            if (standardFindings == null && llmFindings == null) {
+                throw new IllegalArgumentException("scan findings are not available yet");
+            }
+
             JsonNode mergedFindings = mergeFindings(scanId, resultBucketName, mergedResultObjectKey, standardFindings, llmFindings);
             log.info("getScanFindings scanId={} bucket={} standardKey={} llmKey={}",
                     scanId, resultBucketName, standardResultObjectKey, llmResultObjectKey);
@@ -189,8 +192,8 @@ public class ScanService {
                     resultBucketName,
                     mergedResultObjectKey,
                     mergedFindings);
-        } catch (NoSuchKeyException e) {
-            throw new IllegalArgumentException("scan findings file not found");
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             log.error("getScanFindings failed scanId={} bucket={} mergedKey={}", scanId, resultBucketName, mergedResultObjectKey, e);
             throw new IllegalStateException("failed to read scan findings", e);
@@ -419,6 +422,18 @@ public class ScanService {
                 .asByteArray());
     }
 
+    private JsonNode readFindingsDocumentIfPresent(String bucketName, String objectKey) {
+        if (!hasText(objectKey)) {
+            return null;
+        }
+
+        try {
+            return readFindingsDocument(bucketName, objectKey);
+        } catch (NoSuchKeyException exception) {
+            return null;
+        }
+    }
+
     private JsonNode mergeFindings(
             String scanId,
             String resultBucketName,
@@ -427,17 +442,21 @@ public class ScanService {
             JsonNode llmFindings) {
         ObjectNode merged = objectMapper.createObjectNode();
         merged.put("scanId", scanId);
-        merged.put("status", "COMPLETED");
+        merged.put("status", (standardFindings != null && llmFindings != null) ? COMPLETED : "FAILED");
         merged.put("resultBucketName", resultBucketName);
         merged.put("resultObjectKey", mergedResultObjectKey);
 
         ObjectNode engines = merged.putObject("engines");
-        engines.set("standard", standardFindings);
-        engines.set("llm", llmFindings);
+        if (standardFindings != null) {
+            engines.set(STANDARD_ENGINE, standardFindings);
+        }
+        if (llmFindings != null) {
+            engines.set(LLM_ENGINE, llmFindings);
+        }
 
         ArrayNode findings = merged.putArray("findings");
-        appendFindings(findings, standardFindings.path("findings"));
-        appendFindings(findings, llmFindings.path("findings"));
+        appendFindings(findings, standardFindings == null ? null : standardFindings.path("findings"));
+        appendFindings(findings, llmFindings == null ? null : llmFindings.path("findings"));
         return merged;
     }
 
