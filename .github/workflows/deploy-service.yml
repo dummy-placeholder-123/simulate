@@ -1,0 +1,117 @@
+name: Deploy Service
+run-name: Service Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Environment stage
+        required: true
+        type: choice
+        options:
+          - qa
+          - prod
+      service:
+        description: Service to deploy
+        required: true
+        type: choice
+        options:
+          - fes
+          - engine
+          - llm-engine
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+
+jobs:
+  deploy:
+    name: Deploy Service From Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ECR registry
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "${GITHUB_ENV}"
+
+      - name: Resolve service manifest and ECS names
+        run: |
+          case "${{ inputs.service }}" in
+            fes)
+              echo "MANIFEST_PATH=environments/${{ inputs.stage }}/fes.yml" >> "${GITHUB_ENV}"
+              echo "REPOSITORY=qca-fes" >> "${GITHUB_ENV}"
+              echo "CONTAINER_NAME=FesContainer" >> "${GITHUB_ENV}"
+              echo "TASK_SUFFIX=fes" >> "${GITHUB_ENV}"
+              echo "SERVICE_SUFFIX=fes-service" >> "${GITHUB_ENV}"
+              echo "ARTIFACT_PREFIX=fes" >> "${GITHUB_ENV}"
+              ;;
+            engine)
+              echo "MANIFEST_PATH=environments/${{ inputs.stage }}/engine.yml" >> "${GITHUB_ENV}"
+              echo "REPOSITORY=qca-engine" >> "${GITHUB_ENV}"
+              echo "CONTAINER_NAME=EngineContainer" >> "${GITHUB_ENV}"
+              echo "TASK_SUFFIX=engine" >> "${GITHUB_ENV}"
+              echo "SERVICE_SUFFIX=engine-service" >> "${GITHUB_ENV}"
+              echo "ARTIFACT_PREFIX=engine" >> "${GITHUB_ENV}"
+              ;;
+            llm-engine)
+              echo "MANIFEST_PATH=environments/${{ inputs.stage }}/llm-engine.yml" >> "${GITHUB_ENV}"
+              echo "REPOSITORY=qca-llm-engine" >> "${GITHUB_ENV}"
+              echo "CONTAINER_NAME=EngineContainer" >> "${GITHUB_ENV}"
+              echo "TASK_SUFFIX=llm-engine" >> "${GITHUB_ENV}"
+              echo "SERVICE_SUFFIX=llm-engine-service" >> "${GITHUB_ENV}"
+              echo "ARTIFACT_PREFIX=llm-engine" >> "${GITHUB_ENV}"
+              ;;
+            *)
+              echo "unsupported service" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ "${{ inputs.stage }}" = "prod" ]; then
+            PREFIX="qca"
+          else
+            PREFIX="qca-${{ inputs.stage }}"
+          fi
+          echo "ECS_CLUSTER=${PREFIX}-worker-cluster" >> "${GITHUB_ENV}"
+          echo "ECS_SERVICE=${PREFIX}-${SERVICE_SUFFIX}" >> "${GITHUB_ENV}"
+          echo "TASK_FAMILY=${PREFIX}-${TASK_SUFFIX}" >> "${GITHUB_ENV}"
+
+      - name: Read service manifest
+        run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"
+
+      - name: Resolve image URI
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          echo "IMAGE_URI=${ECR_REGISTRY}/${REPOSITORY}:${DEPLOY_TAG}" >> "${GITHUB_ENV}"
+
+      - name: Validate image exists
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          aws ecr describe-images \
+            --repository-name "${REPOSITORY}" \
+            --image-ids imageTag="${DEPLOY_TAG}" >/dev/null
+
+      - name: Deploy ECS service
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          bash scripts/deploy/deploy_ecs.sh \
+            "${ECS_CLUSTER}" \
+            "${ECS_SERVICE}" \
+            "${TASK_FAMILY}" \
+            "${CONTAINER_NAME}" \
+            "${IMAGE_URI}" \
+            "${DEPLOY_STAGE}" \
+            "${ARTIFACT_PREFIX}"

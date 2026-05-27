@@ -2,15 +2,7 @@ name: Release FES UI
 run-name: FES UI Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'QCA/fes/frontend/**'
-      - 'frontend-releases/fes-ui.yml'
-      - 'scripts/deploy/read_frontend_release.py'
-      - 'scripts/deploy/publish_frontend_release.sh'
-      - '.github/workflows/release-fes-ui.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,7 +32,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: QCA/fes/frontend/package-lock.json
+          cache-dependency-path: QCA/fes-ui/package-lock.json
 
       - name: Read frontend release config
         run: python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml

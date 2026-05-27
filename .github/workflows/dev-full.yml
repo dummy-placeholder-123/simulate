@@ -1,0 +1,165 @@
+name: Dev Full
+run-name: Dev Test Release Deploy
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'QCA/fes/**'
+      - 'QCA/engine/**'
+      - 'QCA/llm-engine/**'
+      - 'QCA/fes-ui/**'
+      - 'image-releases/fes.yml'
+      - 'image-releases/engine.yml'
+      - 'image-releases/llm-engine.yml'
+      - 'frontend-releases/fes-ui.yml'
+      - 'scripts/deploy/**'
+      - '.github/workflows/dev-full.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+  SHARED_INFRA_STACK: InfraStack-dev
+
+jobs:
+  dev-full:
+    name: Test Release Deploy Dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: QCA/fes-ui/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ECR registry
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "${GITHUB_ENV}"
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve release tags
+        run: |
+          echo "SHA_TAG=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
+
+      - name: Test FES
+        run: mvn -B -f QCA/fes/pom.xml test
+
+      - name: Test Engine
+        run: mvn -B -f QCA/engine/pom.xml test
+
+      - name: Test LLM Engine
+        run: mvn -B -f QCA/llm-engine/pom.xml test
+
+      - name: Build FES UI
+        run: |
+          cd QCA/fes-ui
+          npm ci
+          npm run build
+
+      - name: Release and deploy FES
+        run: |
+          python3 scripts/deploy/read_image_release.py image-releases/fes.yml
+          bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
+          bash scripts/deploy/deploy_ecs.sh \
+            "qca-dev-worker-cluster" \
+            "qca-dev-fes-service" \
+            "qca-dev-fes" \
+            FesContainer \
+            "${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" \
+            dev \
+            fes
+
+      - name: Release and deploy engine
+        run: |
+          python3 scripts/deploy/read_image_release.py image-releases/engine.yml
+          bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
+          bash scripts/deploy/deploy_ecs.sh \
+            "qca-dev-worker-cluster" \
+            "qca-dev-engine-service" \
+            "qca-dev-engine" \
+            EngineContainer \
+            "${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" \
+            dev \
+            engine
+
+      - name: Release and deploy llm engine
+        run: |
+          python3 scripts/deploy/read_image_release.py image-releases/llm-engine.yml
+          bash scripts/deploy/build_and_push.sh "${RELEASE_SERVICE_DIR}" "${RELEASE_REPOSITORY}" "${RELEASE_STABLE_TAG}"
+          bash scripts/deploy/deploy_ecs.sh \
+            "qca-dev-worker-cluster" \
+            "qca-dev-llm-engine-service" \
+            "qca-dev-llm-engine" \
+            EngineContainer \
+            "${ECR_REGISTRY}/${RELEASE_REPOSITORY}:${SHA_TAG}" \
+            dev \
+            llm-engine
+
+      - name: Resolve UI hosting outputs
+        run: |
+          RELEASE_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiReleaseBucketName'].OutputValue" \
+            --output text)
+          HOSTING_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiHostingBucketName'].OutputValue" \
+            --output text)
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiDistributionId'].OutputValue" \
+            --output text)
+          DEV_ALB_DNS=$(aws cloudformation describe-stacks \
+            --stack-name "InfraStack-dev" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesAlbDnsName'].OutputValue" \
+            --output text)
+
+          echo "FES_UI_RELEASE_BUCKET=${RELEASE_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_HOSTING_BUCKET=${HOSTING_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
+          echo "DEV_API_BASE_URL=http://${DEV_ALB_DNS}" >> "${GITHUB_ENV}"
+
+      - name: Release and deploy FES UI
+        run: |
+          python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
+          bash scripts/deploy/publish_frontend_release.sh \
+            "${FRONTEND_SERVICE_DIR}" \
+            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "${FRONTEND_STABLE_TAG}" \
+            "${FES_UI_RELEASE_BUCKET}"
+          bash scripts/deploy/deploy_static_site.sh \
+            "${FES_UI_RELEASE_BUCKET}" \
+            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "${SHA_TAG}" \
+            "${FES_UI_HOSTING_BUCKET}" \
+            "${FES_UI_DISTRIBUTION_ID}" \
+            "dev" \
+            "${DEV_API_BASE_URL}" \
+            "${DEV_API_BASE_URL}" \
+            "${DEV_API_BASE_URL}"

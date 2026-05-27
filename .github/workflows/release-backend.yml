@@ -1,0 +1,66 @@
+name: Release Backend
+run-name: Backend Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Backend service to release
+        required: true
+        type: choice
+        options:
+          - fes
+          - engine
+          - llm-engine
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+
+jobs:
+  release:
+    name: Release Backend Artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ECR registry
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "${GITHUB_ENV}"
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve release tags
+        run: |
+          echo "SHA_TAG=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
+
+      - name: Read backend release config
+        run: |
+          case "${{ inputs.service }}" in
+            fes) CONFIG_PATH="image-releases/fes.yml" ;;
+            engine) CONFIG_PATH="image-releases/engine.yml" ;;
+            llm-engine) CONFIG_PATH="image-releases/llm-engine.yml" ;;
+            *) echo "unsupported service" >&2; exit 1 ;;
+          esac
+          python3 scripts/deploy/read_image_release.py "${CONFIG_PATH}"
+
+      - name: Build and push backend image
+        run: |
+          bash scripts/deploy/build_and_push.sh \
+            "${RELEASE_SERVICE_DIR}" \
+            "${RELEASE_REPOSITORY}" \
+            "${RELEASE_STABLE_TAG}"

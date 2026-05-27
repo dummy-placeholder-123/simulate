@@ -1,0 +1,61 @@
+name: App CI
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'QCA/fes/**'
+      - 'QCA/engine/**'
+      - 'QCA/llm-engine/**'
+      - 'QCA/fes-ui/**'
+      - '.github/workflows/app-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'QCA/fes/**'
+      - 'QCA/engine/**'
+      - 'QCA/llm-engine/**'
+      - 'QCA/fes-ui/**'
+      - '.github/workflows/app-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build And Test Apps
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: QCA/fes-ui/package-lock.json
+
+      - name: Test FES
+        run: mvn -B -f QCA/fes/pom.xml test
+
+      - name: Test Engine
+        run: mvn -B -f QCA/engine/pom.xml test
+
+      - name: Test LLM Engine
+        run: mvn -B -f QCA/llm-engine/pom.xml test
+
+      - name: Build FES UI
+        run: |
+          cd QCA/fes-ui
+          npm ci
+          npm run build
