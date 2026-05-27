@@ -20,6 +20,9 @@ import software.amazon.awscdk.services.cloudwatch.AlarmProps;
 import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
 import software.amazon.awscdk.services.cloudwatch.Metric;
 import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
+import software.amazon.awscdk.services.cloudfront.Distribution;
+import software.amazon.awscdk.services.cloudfront.DistributionProps;
+import software.amazon.awscdk.services.cloudfront.ViewerProtocolPolicy;
 import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
@@ -79,6 +82,7 @@ import software.amazon.awscdk.services.s3.Bucket;
 import software.amazon.awscdk.services.s3.BucketEncryption;
 import software.amazon.awscdk.services.s3.CorsRule;
 import software.amazon.awscdk.services.s3.HttpMethods;
+import software.amazon.awscdk.services.cloudfront.origins.S3BucketOrigin;
 import software.amazon.awscdk.services.secretsmanager.Secret;
 import software.amazon.awscdk.services.secretsmanager.SecretStringGenerator;
 import software.amazon.awscdk.services.ssm.StringParameter;
@@ -170,6 +174,56 @@ public class InfraStack extends Stack {
                 .autoDeleteObjects(true)
                 .removalPolicy(RemovalPolicy.DESTROY)
                 .build();
+
+        if (isProd) {
+            String uiHostingBucketName = "qca-fes-ui-host-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
+            String uiReleaseBucketName = "qca-fes-ui-releases-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
+
+            Bucket fesUiHostingBucket = Bucket.Builder.create(this, "FesUiHostingBucket")
+                    .bucketName(uiHostingBucketName)
+                    .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
+                    .encryption(BucketEncryption.S3_MANAGED)
+                    .enforceSsl(true)
+                    .versioned(false)
+                    .removalPolicy(RemovalPolicy.DESTROY)
+                    .autoDeleteObjects(true)
+                    .build();
+
+            Bucket fesUiReleaseBucket = Bucket.Builder.create(this, "FesUiReleaseBucket")
+                    .bucketName(uiReleaseBucketName)
+                    .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
+                    .encryption(BucketEncryption.S3_MANAGED)
+                    .enforceSsl(true)
+                    .versioned(false)
+                    .removalPolicy(RemovalPolicy.DESTROY)
+                    .autoDeleteObjects(true)
+                    .build();
+
+            Distribution fesUiDistribution = new Distribution(this, "FesUiDistribution",
+                    DistributionProps.builder()
+                            .defaultRootObject("index.html")
+                            .defaultBehavior(software.amazon.awscdk.services.cloudfront.BehaviorOptions.builder()
+                                    .origin(S3BucketOrigin.withOriginAccessControl(fesUiHostingBucket))
+                                    .viewerProtocolPolicy(ViewerProtocolPolicy.REDIRECT_TO_HTTPS)
+                                    .build())
+                            .build());
+
+            CfnOutput.Builder.create(this, "FesUiReleaseBucketName")
+                    .value(fesUiReleaseBucket.getBucketName())
+                    .build();
+
+            CfnOutput.Builder.create(this, "FesUiHostingBucketName")
+                    .value(fesUiHostingBucket.getBucketName())
+                    .build();
+
+            CfnOutput.Builder.create(this, "FesUiDistributionId")
+                    .value(fesUiDistribution.getDistributionId())
+                    .build();
+
+            CfnOutput.Builder.create(this, "FesUiDistributionUrl")
+                    .value("https://" + fesUiDistribution.getDistributionDomainName())
+                    .build();
+        }
 
         Queue scanDlq = Queue.Builder.create(this, "ScanDeadLetterQueue")
                 .queueName(resourcePrefix + "-scan-dlq")

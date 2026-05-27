@@ -4,11 +4,13 @@ Spring Boot API for creating scans, starting scan execution, and reading scan st
 
 ## API Explorer UI
 
-FES now serves a React app at:
+FES serves the UI locally at:
 
 ```text
 GET /
 ```
+
+The same React app is also deployable as a shared static site on S3 + CloudFront.
 
 The UI includes:
 
@@ -32,13 +34,31 @@ cd QCA/fes/frontend
 npm install
 npm run dev
 npm run build
+npm run build:spring
 ```
 
-`npm run build` writes the compiled assets into:
+Build targets:
 
 ```text
-QCA/fes/src/main/resources/static
+npm run build         -> QCA/fes/frontend/dist
+npm run build:spring  -> QCA/fes/src/main/resources/static
 ```
+
+Release/deploy config:
+
+```text
+frontend-releases/fes-ui.yml
+environments/shared/fes-ui.yml
+```
+
+GitHub Actions:
+
+```text
+.github/workflows/release-fes-ui.yml
+.github/workflows/deploy-fes-ui.yml
+```
+
+The hosted UI does not publish a Docker image. It publishes versioned static build artifacts and deploys them to a shared S3 + CloudFront site.
 
 ## Authentication
 

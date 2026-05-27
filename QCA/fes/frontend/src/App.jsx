@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const randomScanId = () =>
   `scan-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}`;
@@ -19,6 +19,8 @@ const statusTone = (status) => {
   }
   return "fail";
 };
+
+const normalizeBaseUrl = (value) => (value || "").trim().replace(/\/$/, "");
 
 async function copyJson(value) {
   await navigator.clipboard.writeText(typeof value === "string" ? value : pretty(value));
@@ -57,6 +59,9 @@ function RequestCard({ title, method, path, description, actions, fields, reques
 }
 
 export default function App() {
+  const [runtimeConfig, setRuntimeConfig] = useState(null);
+  const [runtimeConfigError, setRuntimeConfigError] = useState("");
+  const [selectedEnv, setSelectedEnv] = useState("");
   const [baseUrl, setBaseUrl] = useState(window.location.origin);
   const [auth, setAuth] = useState({
     username: "qca-admin",
@@ -80,6 +85,44 @@ export default function App() {
   const [lastRequest, setLastRequest] = useState(null);
   const [lastResponse, setLastResponse] = useState(null);
 
+  useEffect(() => {
+    let ignore = false;
+
+    const loadRuntimeConfig = async () => {
+      try {
+        const response = await fetch("/runtime-config.json", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`runtime-config request failed with ${response.status}`);
+        }
+
+        const config = await response.json();
+        if (ignore) {
+          return;
+        }
+
+        setRuntimeConfig(config);
+        setRuntimeConfigError("");
+        const defaultEnv = config.defaultEnv || Object.keys(config.environments || {})[0] || "";
+        setSelectedEnv(defaultEnv);
+        const defaultBaseUrl = config.environments?.[defaultEnv]?.apiBaseUrl;
+        if (defaultBaseUrl) {
+          setBaseUrl(defaultBaseUrl);
+        }
+      } catch (error) {
+        if (ignore) {
+          return;
+        }
+
+        setRuntimeConfigError(error.message);
+      }
+    };
+
+    loadRuntimeConfig();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
   const authHeaders = useMemo(() => {
     if (!auth.accessToken) {
       return {};
@@ -97,7 +140,8 @@ export default function App() {
     file,
     responseTransform,
   }) => {
-    const url = rawUrl || `${baseUrl.replace(/\/$/, "")}${path}`;
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+    const url = rawUrl || `${normalizedBaseUrl}${path}`;
     const requestHeaders = { ...headers };
     const init = { method, headers: requestHeaders };
 
@@ -282,6 +326,14 @@ export default function App() {
       path: `/api/scans/${encodeURIComponent(scan.scanId)}/findings`,
     });
 
+  const handleEnvChange = (nextEnv) => {
+    setSelectedEnv(nextEnv);
+    const configuredUrl = runtimeConfig?.environments?.[nextEnv]?.apiBaseUrl;
+    if (configuredUrl) {
+      setBaseUrl(configuredUrl);
+    }
+  };
+
   const requestCards = [
     {
       title: "Login",
@@ -290,7 +342,7 @@ export default function App() {
       description: "Exchange demo credentials for access and refresh tokens.",
       requestPreview: {
         method: "POST",
-        url: `${baseUrl.replace(/\/$/, "")}/api/auth/login`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/auth/login`,
         headers: { "Content-Type": "application/json" },
         body: {
           username: auth.username,
@@ -331,7 +383,7 @@ export default function App() {
       description: "Rotate the access token using the current refresh token.",
       requestPreview: {
         method: "POST",
-        url: `${baseUrl.replace(/\/$/, "")}/api/auth/refresh`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/auth/refresh`,
         headers: { "Content-Type": "application/json" },
         body: { refreshToken: auth.refreshToken || "replace-with-refresh-token" },
       },
@@ -348,7 +400,7 @@ export default function App() {
       description: "Creates the scan and returns the presigned upload URL.",
       requestPreview: {
         method: "POST",
-        url: `${baseUrl.replace(/\/$/, "")}/api/create-scan`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/create-scan`,
         headers: {
           Authorization: auth.accessToken ? "Bearer <access-token>" : "Bearer <missing>",
           "Content-Type": "application/json",
@@ -487,7 +539,7 @@ export default function App() {
       description: "Queues the Step Functions workflow after the file is uploaded.",
       requestPreview: {
         method: "POST",
-        url: `${baseUrl.replace(/\/$/, "")}/api/start-scan`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/start-scan`,
         headers: {
           Authorization: auth.accessToken ? "Bearer <access-token>" : "Bearer <missing>",
           "Content-Type": "application/json",
@@ -507,7 +559,7 @@ export default function App() {
       description: "Lists recent scans for the configured account.",
       requestPreview: {
         method: "GET",
-        url: `${baseUrl.replace(/\/$/, "")}/api/accounts/${encodeURIComponent(scan.accountId)}/scans?limit=50`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/accounts/${encodeURIComponent(scan.accountId)}/scans?limit=50`,
       },
       actions: (
         <button className="secondary-button" onClick={listScans} disabled={inFlight}>
@@ -522,7 +574,7 @@ export default function App() {
       description: "Returns the current workflow status for the scan.",
       requestPreview: {
         method: "GET",
-        url: `${baseUrl.replace(/\/$/, "")}/api/scans/${encodeURIComponent(scan.scanId)}/status`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/scans/${encodeURIComponent(scan.scanId)}/status`,
       },
       actions: (
         <button className="secondary-button" onClick={getStatus} disabled={inFlight}>
@@ -537,7 +589,7 @@ export default function App() {
       description: "Returns merged findings. If one engine failed, successful engine findings still appear here.",
       requestPreview: {
         method: "GET",
-        url: `${baseUrl.replace(/\/$/, "")}/api/scans/${encodeURIComponent(scan.scanId)}/findings`,
+        url: `${normalizeBaseUrl(baseUrl)}/api/scans/${encodeURIComponent(scan.scanId)}/findings`,
       },
       actions: (
         <button className="secondary-button" onClick={getFindings} disabled={inFlight}>
@@ -576,6 +628,22 @@ export default function App() {
       <section className="toolbar-card">
         <div className="toolbar">
           <div className="toolbar-field">
+            <label>Environment</label>
+            <select
+              className="text-input"
+              value={selectedEnv}
+              onChange={(event) => handleEnvChange(event.target.value)}
+              disabled={!runtimeConfig || Object.keys(runtimeConfig.environments || {}).length === 0}
+            >
+              <option value="">Select environment</option>
+              {Object.entries(runtimeConfig?.environments || {}).map(([envName, config]) => (
+                <option key={envName} value={envName}>
+                  {envName} - {config.apiBaseUrl}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="toolbar-field">
             <label>Base URL</label>
             <input className="text-input" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
           </div>
@@ -596,6 +664,9 @@ export default function App() {
             />
           </div>
         </div>
+        {runtimeConfigError ? (
+          <div className="small-note">runtime-config.json not loaded: {runtimeConfigError}</div>
+        ) : null}
       </section>
 
       <div className="app-grid">

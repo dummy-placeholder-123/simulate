@@ -1,0 +1,7 @@
+# deployment.operation = deploy or push-only
+# tag = already-built frontend release tag to deploy
+environment: shared
+deployment:
+  operation: deploy
+release-name: shared-fes-ui
+tag: latest

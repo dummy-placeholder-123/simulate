@@ -1,0 +1,135 @@
+name: Deploy FES UI
+run-name: FES UI Deploy From Shared Manifest
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'environments/shared/fes-ui.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+  SHARED_INFRA_STACK: InfraStack
+
+jobs:
+  deploy:
+    name: Deploy FES UI From Shared Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve changed shared UI manifest
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          ZERO_SHA=0000000000000000000000000000000000000000
+          if [ "${BEFORE_SHA}" = "${ZERO_SHA}" ]; then
+            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'environments/shared/fes-ui.yml')
+          else
+            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'environments/shared/fes-ui.yml')
+          fi
+
+          if [ "${#CHANGED_MANIFESTS[@]}" -ne 1 ]; then
+            printf 'Exactly one shared UI manifest change is required.\nChanged files:\n%s\n' "${CHANGED_MANIFESTS[@]-}" >&2
+            exit 1
+          fi
+
+          echo "MANIFEST_PATH=${CHANGED_MANIFESTS[0]}" >> "${GITHUB_ENV}"
+
+      - name: Read shared UI manifest
+        run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## FES UI Deployment"
+            echo ""
+            echo "- Manifest: ${MANIFEST_PATH}"
+            echo "- Operation: ${DEPLOY_OPERATION}"
+            echo "- Release: ${RELEASE_NAME}"
+            echo "- Tag: ${DEPLOY_TAG}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Skip deploy on push-only
+        if: ${{ env.DEPLOY_OPERATION != 'deploy' }}
+        run: |
+          echo "- Skipped: push-only" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Resolve shared UI hosting outputs
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          RELEASE_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiReleaseBucketName'].OutputValue" \
+            --output text)
+          HOSTING_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiHostingBucketName'].OutputValue" \
+            --output text)
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${SHARED_INFRA_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FesUiDistributionId'].OutputValue" \
+            --output text)
+
+          for VALUE in "${RELEASE_BUCKET}" "${HOSTING_BUCKET}" "${DISTRIBUTION_ID}"; do
+            if [ -z "${VALUE}" ] || [ "${VALUE}" = "None" ]; then
+              echo "Shared UI hosting outputs not found in ${SHARED_INFRA_STACK}" >&2
+              exit 1
+            fi
+          done
+
+          echo "FES_UI_RELEASE_BUCKET=${RELEASE_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_HOSTING_BUCKET=${HOSTING_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
+
+      - name: Resolve stage API URLs
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          resolve_api_url() {
+            local stack_name="$1"
+            local alb_dns
+            alb_dns=$(aws cloudformation describe-stacks \
+              --stack-name "${stack_name}" \
+              --query "Stacks[0].Outputs[?OutputKey=='FesAlbDnsName'].OutputValue" \
+              --output text)
+            if [ -z "${alb_dns}" ] || [ "${alb_dns}" = "None" ]; then
+              echo "FesAlbDnsName output not found in ${stack_name}" >&2
+              exit 1
+            fi
+            echo "http://${alb_dns}"
+          }
+
+          echo "DEV_API_BASE_URL=$(resolve_api_url InfraStack-dev)" >> "${GITHUB_ENV}"
+          echo "QA_API_BASE_URL=$(resolve_api_url InfraStack-qa)" >> "${GITHUB_ENV}"
+          echo "PROD_API_BASE_URL=$(resolve_api_url InfraStack)" >> "${GITHUB_ENV}"
+
+      - name: Deploy shared UI hosting
+        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        run: |
+          bash scripts/deploy/deploy_static_site.sh \
+            "${FES_UI_RELEASE_BUCKET}" \
+            "fes-ui" \
+            "${DEPLOY_TAG}" \
+            "${FES_UI_HOSTING_BUCKET}" \
+            "${FES_UI_DISTRIBUTION_ID}" \
+            "dev" \
+            "${DEV_API_BASE_URL}" \
+            "${QA_API_BASE_URL}" \
+            "${PROD_API_BASE_URL}"
