@@ -1,6 +1,4 @@
 @baseUrl = http://localhost:8080
-@accessToken = replace-with-access-token
-@refreshToken = replace-with-refresh-token
 @uploadUrl = paste-presigned-upload-url-here
 @uploadFile = ./amazon-q-detectors-main.zip
 @accountId = 564061926474
@@ -9,27 +7,9 @@
 ### Health
 GET {{baseUrl}}/actuator/health
 
-### Login
-POST {{baseUrl}}/api/auth/login
-Content-Type: application/json
-
-{
-  "username": "qca-admin",
-  "password": "local-dev-password"
-}
-
-### Refresh tokens
-POST {{baseUrl}}/api/auth/refresh
-Content-Type: application/json
-
-{
-  "refreshToken": "{{refreshToken}}"
-}
-
 ### Create scan
 POST {{baseUrl}}/api/create-scan
 Content-Type: application/json
-Authorization: Bearer {{accessToken}}
 
 {
   "scanId": "{{scanId}}",
@@ -50,7 +30,6 @@ Content-Type: application/octet-stream
 ### Start scan
 POST {{baseUrl}}/api/start-scan
 Content-Type: application/json
-Authorization: Bearer {{accessToken}}
 
 {
   "scanId": "{{scanId}}"

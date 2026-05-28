@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 const randomScanId = () =>
   `scan-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}`;
@@ -108,12 +108,6 @@ export default function App() {
   const [runtimeConfigError, setRuntimeConfigError] = useState("");
   const [selectedEnv, setSelectedEnv] = useState("");
   const [baseUrl, setBaseUrl] = useState(window.location.origin);
-  const [auth, setAuth] = useState({
-    username: "qca-admin",
-    password: "",
-    accessToken: "",
-    refreshToken: "",
-  });
   const [scan, setScan] = useState({
     scanId: randomScanId(),
     accountId: "564061926474",
@@ -166,13 +160,6 @@ export default function App() {
       ignore = true;
     };
   }, []);
-
-  const authHeaders = useMemo(() => {
-    if (!auth.accessToken) {
-      return {};
-    }
-    return { Authorization: `Bearer ${auth.accessToken}` };
-  }, [auth.accessToken]);
 
   const performRequest = async ({
     title,
@@ -272,47 +259,11 @@ export default function App() {
     }
   };
 
-  const login = async () => {
-    const body = await performRequest({
-      title: "Load Session",
-      method: "POST",
-      path: "/api/auth/login",
-      body: {
-        username: auth.username,
-        password: auth.password,
-      },
-    });
-
-    setAuth((current) => ({
-      ...current,
-      accessToken: body.accessToken || "",
-      refreshToken: body.refreshToken || "",
-    }));
-  };
-
-  const refresh = async () => {
-    const body = await performRequest({
-      title: "Refresh Session",
-      method: "POST",
-      path: "/api/auth/refresh",
-      body: {
-        refreshToken: auth.refreshToken,
-      },
-    });
-
-    setAuth((current) => ({
-      ...current,
-      accessToken: body.accessToken || "",
-      refreshToken: body.refreshToken || current.refreshToken,
-    }));
-  };
-
   const createScan = async () => {
     const body = await performRequest({
       title: "Create Scan",
       method: "POST",
       path: "/api/create-scan",
-      headers: authHeaders,
       body: {
         scanId: scan.scanId,
         accountId: scan.accountId,
@@ -354,7 +305,6 @@ export default function App() {
       title: "Start Scan",
       method: "POST",
       path: "/api/start-scan",
-      headers: authHeaders,
       body: { scanId: scan.scanId },
     });
 
@@ -389,65 +339,6 @@ export default function App() {
 
   const sections = [
     {
-      title: "Load Session",
-      method: "POST",
-      path: "/api/auth/login",
-      description: "Fetch access and refresh tokens using the demo session credentials.",
-      defaultOpen: true,
-      requestPreview: {
-        method: "POST",
-        url: `${normalizeBaseUrl(baseUrl)}/api/auth/login`,
-        headers: { "Content-Type": "application/json" },
-        body: {
-          username: auth.username,
-          password: auth.password || "replace-with-demo-password",
-        },
-      },
-      actions: (
-        <button className="primary-button" onClick={login} disabled={inFlight}>
-          Load Session
-        </button>
-      ),
-      fields: (
-        <div className="session-fields">
-          <div className="form-field">
-            <label>Username</label>
-            <input
-              className="text-input"
-              value={auth.username}
-              onChange={(event) => setAuth((current) => ({ ...current, username: event.target.value }))}
-            />
-          </div>
-          <div className="form-field">
-            <label>Password</label>
-            <input
-              type="password"
-              className="text-input"
-              value={auth.password}
-              onChange={(event) => setAuth((current) => ({ ...current, password: event.target.value }))}
-            />
-          </div>
-        </div>
-      ),
-    },
-    {
-      title: "Refresh Session",
-      method: "POST",
-      path: "/api/auth/refresh",
-      description: "Rotate the access token using the stored refresh token.",
-      requestPreview: {
-        method: "POST",
-        url: `${normalizeBaseUrl(baseUrl)}/api/auth/refresh`,
-        headers: { "Content-Type": "application/json" },
-        body: { refreshToken: auth.refreshToken ? "<stored>" : "<missing>" },
-      },
-      actions: (
-        <button className="secondary-button" onClick={refresh} disabled={inFlight || !auth.refreshToken}>
-          Refresh Session
-        </button>
-      ),
-    },
-    {
       title: "Create Scan",
       method: "POST",
       path: "/api/create-scan",
@@ -457,7 +348,6 @@ export default function App() {
         method: "POST",
         url: `${normalizeBaseUrl(baseUrl)}/api/create-scan`,
         headers: {
-          Authorization: auth.accessToken ? "Bearer <stored>" : "Bearer <missing>",
           "Content-Type": "application/json",
         },
         body: {
@@ -471,7 +361,7 @@ export default function App() {
         },
       },
       actions: (
-        <button className="primary-button" onClick={createScan} disabled={inFlight || !auth.accessToken}>
+        <button className="primary-button" onClick={createScan} disabled={inFlight}>
           Create Scan
         </button>
       ),
@@ -596,14 +486,11 @@ export default function App() {
       requestPreview: {
         method: "POST",
         url: `${normalizeBaseUrl(baseUrl)}/api/start-scan`,
-        headers: {
-          Authorization: auth.accessToken ? "Bearer <stored>" : "Bearer <missing>",
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: { scanId: scan.scanId },
       },
       actions: (
-        <button className="primary-button" onClick={startScan} disabled={inFlight || !auth.accessToken}>
+        <button className="primary-button" onClick={startScan} disabled={inFlight}>
           Start Scan
         </button>
       ),
@@ -661,14 +548,14 @@ export default function App() {
         <div className="hero-copy">
           <h1 className="app-title">QCA API Explorer</h1>
           <p className="app-subtitle">
-            Use a single page to create a session, create a scan, upload the archive, start the workflow, and inspect
-            status or findings. Each request keeps its own request and response history.
+            Create a scan, upload the archive, start the workflow, and inspect status or findings from one page.
+            Each request keeps its own request and response history.
           </p>
         </div>
         <div className="hero-meta">
           <div className="summary-card">
-            <span className="summary-label">Session</span>
-            <div className="summary-value">{auth.accessToken ? "Loaded" : "Not loaded"}</div>
+            <span className="summary-label">API Access</span>
+            <div className="summary-value">Open</div>
           </div>
           <div className="summary-card">
             <span className="summary-label">Current Scan ID</span>
@@ -692,7 +579,7 @@ export default function App() {
               disabled={!runtimeConfig || Object.keys(runtimeConfig.environments || {}).length === 0}
             >
               <option value="">Select environment</option>
-              {Object.entries(runtimeConfig?.environments || {}).map(([envName, config]) => (
+              {Object.entries(runtimeConfig?.environments || {}).map(([envName]) => (
                 <option key={envName} value={envName}>
                   {envName}
                 </option>
@@ -702,29 +589,6 @@ export default function App() {
           <div className="toolbar-field toolbar-span-2">
             <label>Base URL</label>
             <input className="text-input" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
-          </div>
-          <div className="toolbar-field">
-            <label>Session Password</label>
-            <input
-              type="password"
-              className="text-input"
-              value={auth.password}
-              onChange={(event) => setAuth((current) => ({ ...current, password: event.target.value }))}
-              placeholder="Demo session password"
-            />
-          </div>
-          <div className="toolbar-actions">
-            <button className="primary-button" type="button" onClick={login} disabled={inFlight}>
-              Load Session
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={refresh}
-              disabled={inFlight || !auth.refreshToken}
-            >
-              Refresh
-            </button>
           </div>
         </div>
         {runtimeConfigError ? <div className="small-note">runtime-config.json not loaded: {runtimeConfigError}</div> : null}
