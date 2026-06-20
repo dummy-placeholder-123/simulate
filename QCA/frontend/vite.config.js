@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
       assetsDir: ".",
       rollupOptions: {
         output: {
-          entryFileNames: "app.js",
+          entryFileNames: springBuild ? "app.js" : "app-[hash].js",
           chunkFileNames: springBuild ? "chunks/[name].js" : "chunks/[name]-[hash].js",
           assetFileNames: (assetInfo) => {
             if (assetInfo.name?.endsWith(".css")) {
