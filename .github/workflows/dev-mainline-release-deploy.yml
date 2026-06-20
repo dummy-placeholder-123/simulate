@@ -1,0 +1,242 @@
+name: Dev Mainline Release Deploy
+run-name: Release All And Deploy Dev
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'QCA/**'
+      - 'releases/**'
+      - 'scripts/deploy/**'
+      - '.github/workflows/dev-mainline-release-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: dev-mainline-release-deploy
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
+  DEPLOY_STAGE: dev
+  ECS_CLUSTER: qca-dev-worker-cluster
+  SHARED_INFRA_STACK: InfraStack-dev
+  FES_UI_AUTH_PROVIDER: ${{ vars.FES_UI_AUTH_PROVIDER || 'cognito' }}
+  FES_UI_SESSION_TTL_SECONDS: ${{ vars.FES_UI_SESSION_TTL_SECONDS || '21600' }}
+  FES_UI_COGNITO_REGION: ${{ vars.FES_UI_COGNITO_REGION || '' }}
+  FES_UI_COGNITO_USER_POOL_ID: ${{ vars.FES_UI_COGNITO_USER_POOL_ID || '' }}
+  FES_UI_COGNITO_CLIENT_ID: ${{ vars.FES_UI_COGNITO_CLIENT_ID || '' }}
+
+jobs:
+  images:
+    name: Release And Deploy ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: engine
+            service_dir: QCA/engine
+            repository: qca-engine
+            ecs_service: qca-dev-engine-service
+            task_family: qca-dev-engine
+            container_name: EngineContainer
+            artifact_prefix: engine
+          - label: fes
+            service_dir: QCA/fes
+            repository: qca-fes
+            ecs_service: qca-dev-fes-service
+            task_family: qca-dev-fes
+            container_name: FesContainer
+            artifact_prefix: fes
+          - label: llm-engine
+            service_dir: QCA/llm-engine
+            repository: qca-llm-engine
+            ecs_service: qca-dev-llm-engine-service
+            task_family: qca-dev-llm-engine
+            container_name: EngineContainer
+            artifact_prefix: llm-engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve ECR registry and tags
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "${GITHUB_ENV}"
+          echo "SHA_TAG=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        run: |
+          bash scripts/deploy/build_and_push.sh \
+            "${{ matrix.service_dir }}" \
+            "${{ matrix.repository }}" \
+            latest
+
+      - name: Deploy dev ECS service
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${{ matrix.repository }}:${SHA_TAG}"
+          bash scripts/deploy/deploy_ecs.sh \
+            "${ECS_CLUSTER}" \
+            "${{ matrix.ecs_service }}" \
+            "${{ matrix.task_family }}" \
+            "${{ matrix.container_name }}" \
+            "${IMAGE_URI}" \
+            "${DEPLOY_STAGE}" \
+            "${{ matrix.artifact_prefix }}"
+
+      - name: Write summary
+        run: |
+          {
+            echo "## ${{ matrix.label }} dev release/deploy"
+            echo ""
+            echo "- Repository: ${{ matrix.repository }}"
+            echo "- Tags pushed: latest, ${SHA_TAG}, ${DATE_TAG}"
+            echo "- ECS service: ${{ matrix.ecs_service }}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  fes-ui:
+    name: Release And Deploy FES UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: QCA/frontend/package-lock.json
+
+      - name: Read frontend release config
+        run: python3 scripts/deploy/read_frontend_release.py releases/fes-ui.yml
+
+      - name: Resolve release tags
+        run: |
+          echo "SHA_TAG=${GITHUB_SHA}" >> "${GITHUB_ENV}"
+          echo "DATE_TAG=$(date -u +%Y%m%d-%H%M%S)" >> "${GITHUB_ENV}"
+
+      - name: Resolve shared UI hosting outputs
+        run: |
+          resolve_stack_output() {
+            local stack_name="$1"
+            local output_key="$2"
+            aws cloudformation describe-stacks \
+              --stack-name "${stack_name}" \
+              --query "Stacks[0].Outputs[?OutputKey=='${output_key}'].OutputValue" \
+              --output text
+          }
+
+          RELEASE_BUCKET=$(resolve_stack_output "${SHARED_INFRA_STACK}" FesUiReleaseBucketName)
+          HOSTING_BUCKET=$(resolve_stack_output "${SHARED_INFRA_STACK}" FesUiHostingBucketName)
+          DISTRIBUTION_ID=$(resolve_stack_output "${SHARED_INFRA_STACK}" FesUiDistributionId)
+
+          for VALUE in "${RELEASE_BUCKET}" "${HOSTING_BUCKET}" "${DISTRIBUTION_ID}"; do
+            if [ -z "${VALUE}" ] || [ "${VALUE}" = "None" ]; then
+              echo "Shared UI hosting outputs not found in ${SHARED_INFRA_STACK}" >&2
+              exit 1
+            fi
+          done
+
+          echo "FES_UI_RELEASE_BUCKET=${RELEASE_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_HOSTING_BUCKET=${HOSTING_BUCKET}" >> "${GITHUB_ENV}"
+          echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
+
+      - name: Resolve runtime config
+        run: |
+          resolve_api_url() {
+            local stack_name="$1"
+            local alb_dns
+            alb_dns=$(aws cloudformation describe-stacks \
+              --stack-name "${stack_name}" \
+              --query "Stacks[0].Outputs[?OutputKey=='FesAlbDnsName'].OutputValue" \
+              --output text 2>/dev/null || true)
+            if [ -z "${alb_dns}" ] || [ "${alb_dns}" = "None" ]; then
+              echo ""
+            else
+              echo "http://${alb_dns}"
+            fi
+          }
+
+          resolve_stack_output() {
+            local output_key="$1"
+            local value
+            value=$(aws cloudformation describe-stacks \
+              --stack-name "${SHARED_INFRA_STACK}" \
+              --query "Stacks[0].Outputs[?OutputKey=='${output_key}'].OutputValue" \
+              --output text)
+            if [ -z "${value}" ] || [ "${value}" = "None" ]; then
+              echo "${output_key} output not found in ${SHARED_INFRA_STACK}" >&2
+              exit 1
+            fi
+            echo "${value}"
+          }
+
+          echo "DEV_API_BASE_URL=$(resolve_api_url InfraStack-dev)" >> "${GITHUB_ENV}"
+          echo "QA_API_BASE_URL=$(resolve_api_url InfraStack-qa)" >> "${GITHUB_ENV}"
+          echo "PROD_API_BASE_URL=$(resolve_api_url InfraStack)" >> "${GITHUB_ENV}"
+
+          if [ "${FES_UI_AUTH_PROVIDER}" = "cognito" ]; then
+            if [ -z "${FES_UI_COGNITO_REGION}" ]; then
+              echo "FES_UI_COGNITO_REGION=${AWS_REGION}" >> "${GITHUB_ENV}"
+            fi
+            if [ -z "${FES_UI_COGNITO_USER_POOL_ID}" ]; then
+              echo "FES_UI_COGNITO_USER_POOL_ID=$(resolve_stack_output FesCognitoUserPoolId)" >> "${GITHUB_ENV}"
+            fi
+            if [ -z "${FES_UI_COGNITO_CLIENT_ID}" ]; then
+              echo "FES_UI_COGNITO_CLIENT_ID=$(resolve_stack_output FesCognitoClientId)" >> "${GITHUB_ENV}"
+            fi
+          fi
+
+      - name: Publish frontend release artifacts
+        run: |
+          bash scripts/deploy/publish_frontend_release.sh \
+            "${FRONTEND_SERVICE_DIR}" \
+            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "${FRONTEND_STABLE_TAG}" \
+            "${FES_UI_RELEASE_BUCKET}"
+
+      - name: Deploy shared UI hosting to dev
+        run: |
+          bash scripts/deploy/deploy_static_site.sh \
+            "${FES_UI_RELEASE_BUCKET}" \
+            "${FRONTEND_ARTIFACT_PREFIX}" \
+            "${SHA_TAG}" \
+            "${FES_UI_HOSTING_BUCKET}" \
+            "${FES_UI_DISTRIBUTION_ID}" \
+            "${DEPLOY_STAGE}" \
+            "${DEV_API_BASE_URL}" \
+            "${QA_API_BASE_URL}" \
+            "${PROD_API_BASE_URL}"
+
+      - name: Write summary
+        run: |
+          {
+            echo "## FES UI dev release/deploy"
+            echo ""
+            echo "- Artifact prefix: ${FRONTEND_ARTIFACT_PREFIX}"
+            echo "- Tags pushed: ${FRONTEND_STABLE_TAG}, ${SHA_TAG}, ${DATE_TAG}"
+            echo "- Default environment: ${DEPLOY_STAGE}"
+          } >> "${GITHUB_STEP_SUMMARY}"
