@@ -24,13 +24,13 @@ The UI includes:
 Source:
 
 ```text
-QCA/fes/frontend
+QCA/frontend
 ```
 
 Frontend commands:
 
 ```sh
-cd QCA/fes/frontend
+cd QCA/frontend
 npm install
 npm run dev
 npm run build
@@ -40,7 +40,7 @@ npm run build:spring
 Build targets:
 
 ```text
-npm run build         -> QCA/fes/frontend/dist
+npm run build         -> QCA/frontend/dist
 npm run build:spring  -> QCA/fes/src/main/resources/static
 ```
 

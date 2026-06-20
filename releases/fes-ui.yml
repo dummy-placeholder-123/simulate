@@ -1,4 +1,4 @@
-service-dir: QCA/fes/frontend
+service-dir: QCA/frontend
 release-label: fes-ui
 stable-tag: latest
 artifact-prefix: fes-ui

@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - 'QCA/fes/frontend/**'
+      - 'QCA/frontend/**'
       - 'releases/fes-ui.yml'
       - 'scripts/deploy/read_frontend_release.py'
       - 'scripts/deploy/publish_frontend_release.sh'
@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: QCA/fes/frontend/package-lock.json
+          cache-dependency-path: QCA/frontend/package-lock.json
 
       - name: Read frontend release config
         run: python3 scripts/deploy/read_frontend_release.py releases/fes-ui.yml
