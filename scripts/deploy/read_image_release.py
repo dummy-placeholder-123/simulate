@@ -4,10 +4,31 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
-
 
 TAG_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+KEY_VALUE_PATTERN = re.compile(r"^([A-Za-z0-9._-]+):(?:\s*(.*))?$")
+
+
+def load_config(path):
+    doc = {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            if raw_line.startswith((" ", "\t")):
+                continue
+
+            line = raw_line.split("#", 1)[0].strip()
+            if not line:
+                continue
+
+            match = KEY_VALUE_PATTERN.match(line)
+            if not match:
+                raise SystemExit(f"unsupported release config line: {raw_line.rstrip()}")
+
+            key, value = match.groups()
+            doc[key] = (value or "").strip().strip("\"'")
+
+    return doc
 
 
 def main() -> int:
@@ -18,8 +39,7 @@ def main() -> int:
     if not config_path.is_file():
         raise SystemExit(f"release config not found: {config_path}")
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        doc = yaml.safe_load(f) or {}
+    doc = load_config(config_path)
 
     repository = (doc.get("repo") or "").strip()
     service_dir = (doc.get("service-dir") or "").strip()

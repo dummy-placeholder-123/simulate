@@ -7,7 +7,7 @@ on:
       - main
     paths:
       - 'QCA/fes/frontend/**'
-      - 'frontend-releases/fes-ui.yml'
+      - 'releases/fes-ui.yml'
       - 'scripts/deploy/read_frontend_release.py'
       - 'scripts/deploy/publish_frontend_release.sh'
       - '.github/workflows/release-fes-ui.yml'
@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: QCA/fes/frontend/package-lock.json
 
       - name: Read frontend release config
-        run: python3 scripts/deploy/read_frontend_release.py frontend-releases/fes-ui.yml
+        run: python3 scripts/deploy/read_frontend_release.py releases/fes-ui.yml
 
       - name: Resolve shared UI release bucket
         run: |

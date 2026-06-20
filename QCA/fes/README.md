@@ -47,8 +47,10 @@ npm run build:spring  -> QCA/fes/src/main/resources/static
 Release/deploy config:
 
 ```text
-frontend-releases/fes-ui.yml
-environments/shared/fes-ui.yml
+releases/fes-ui.yml
+deploy-env/dev/fes-ui.yml
+deploy-env/qa/fes-ui.yml
+deploy-env/prod/fes-ui.yml
 ```
 
 GitHub Actions:

@@ -1,12 +1,12 @@
 name: Deploy FES UI
-run-name: FES UI Deploy From Shared Manifest
+run-name: FES UI Deploy From Environment Manifest
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'environments/shared/fes-ui.yml'
+      - 'deploy-env/*/fes-ui.yml'
 
 permissions:
   contents: read
@@ -19,7 +19,7 @@ env:
 
 jobs:
   deploy:
-    name: Deploy FES UI From Shared Manifest
+    name: Deploy FES UI From Changed Manifest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,7 +33,7 @@ jobs:
           role-to-assume: ${{ env.AWS_CDK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Resolve changed shared UI manifest
+      - name: Resolve changed UI manifest
         env:
           BEFORE_SHA: ${{ github.event.before }}
         run: |
@@ -41,19 +41,21 @@ jobs:
 
           ZERO_SHA=0000000000000000000000000000000000000000
           if [ "${BEFORE_SHA}" = "${ZERO_SHA}" ]; then
-            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'environments/shared/fes-ui.yml')
+            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'deploy-env/*/fes-ui.yml')
           else
-            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'environments/shared/fes-ui.yml')
+            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'deploy-env/*/fes-ui.yml')
           fi
 
           if [ "${#CHANGED_MANIFESTS[@]}" -ne 1 ]; then
-            printf 'Exactly one shared UI manifest change is required.\nChanged files:\n%s\n' "${CHANGED_MANIFESTS[@]-}" >&2
+            printf 'Exactly one UI manifest change is required.\nChanged files:\n%s\n' "${CHANGED_MANIFESTS[@]-}" >&2
             exit 1
           fi
 
           echo "MANIFEST_PATH=${CHANGED_MANIFESTS[0]}" >> "${GITHUB_ENV}"
 
-      - name: Read shared UI manifest
+      - name: Read UI manifest
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
         run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"
 
       - name: Write deployment summary
@@ -62,18 +64,19 @@ jobs:
             echo "## FES UI Deployment"
             echo ""
             echo "- Manifest: ${MANIFEST_PATH}"
-            echo "- Operation: ${DEPLOY_OPERATION}"
             echo "- Release: ${RELEASE_NAME}"
+            echo "- Default environment: ${DEPLOY_STAGE}"
             echo "- Tag: ${DEPLOY_TAG}"
+            echo "- Tag changed: ${DEPLOY_TAG_CHANGED}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Skip deploy on push-only
-        if: ${{ env.DEPLOY_OPERATION != 'deploy' }}
+      - name: Skip deploy when tag is unchanged
+        if: ${{ env.DEPLOY_TAG_CHANGED != 'true' }}
         run: |
-          echo "- Skipped: push-only" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Skipped: manifest tag did not change" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Resolve shared UI hosting outputs
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           RELEASE_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name "${SHARED_INFRA_STACK}" \
@@ -100,7 +103,7 @@ jobs:
           echo "FES_UI_DISTRIBUTION_ID=${DISTRIBUTION_ID}" >> "${GITHUB_ENV}"
 
       - name: Resolve stage API URLs
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           resolve_api_url() {
             local stack_name="$1"
@@ -121,7 +124,7 @@ jobs:
           echo "PROD_API_BASE_URL=$(resolve_api_url InfraStack)" >> "${GITHUB_ENV}"
 
       - name: Deploy shared UI hosting
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           bash scripts/deploy/deploy_static_site.sh \
             "${FES_UI_RELEASE_BUCKET}" \
@@ -129,7 +132,7 @@ jobs:
             "${DEPLOY_TAG}" \
             "${FES_UI_HOSTING_BUCKET}" \
             "${FES_UI_DISTRIBUTION_ID}" \
-            "dev" \
+            "${DEPLOY_STAGE}" \
             "${DEV_API_BASE_URL}" \
             "${QA_API_BASE_URL}" \
             "${PROD_API_BASE_URL}"

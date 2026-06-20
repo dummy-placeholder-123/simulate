@@ -7,7 +7,7 @@ on:
       - main
     paths:
       - 'QCA/fes/**'
-      - 'image-releases/fes.yml'
+      - 'releases/fes.yml'
       - 'scripts/deploy/build_and_push.sh'
       - 'scripts/deploy/read_image_release.py'
       - '.github/workflows/release-fes-image.yml'
@@ -40,7 +40,7 @@ jobs:
           echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> ${GITHUB_ENV}
 
       - name: Read image release config
-        run: python3 scripts/deploy/read_image_release.py image-releases/fes.yml
+        run: python3 scripts/deploy/read_image_release.py releases/fes.yml
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2

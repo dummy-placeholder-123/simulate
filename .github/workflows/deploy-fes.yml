@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - 'environments/*/fes.yml'
+      - 'deploy-env/*/fes.yml'
 
 permissions:
   contents: read
@@ -46,9 +46,9 @@ jobs:
 
           ZERO_SHA=0000000000000000000000000000000000000000
           if [ "${BEFORE_SHA}" = "${ZERO_SHA}" ]; then
-            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'environments/*/fes.yml')
+            mapfile -t CHANGED_MANIFESTS < <(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}" -- 'deploy-env/*/fes.yml')
           else
-            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'environments/*/fes.yml')
+            mapfile -t CHANGED_MANIFESTS < <(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" -- 'deploy-env/*/fes.yml')
           fi
 
           if [ "${#CHANGED_MANIFESTS[@]}" -eq 0 ]; then
@@ -64,6 +64,8 @@ jobs:
           echo "MANIFEST_PATH=${CHANGED_MANIFESTS[0]}" >> "${GITHUB_ENV}"
 
       - name: Read service manifest
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
         run: python3 scripts/deploy/read_service_manifest.py "${MANIFEST_PATH}"
 
       - name: Write deployment summary
@@ -72,31 +74,31 @@ jobs:
             echo "## FES Deployment"
             echo ""
             echo "- Manifest: ${MANIFEST_PATH}"
-            echo "- Operation: ${DEPLOY_OPERATION}"
             echo "- Release: ${RELEASE_NAME}"
             echo "- Stage: ${DEPLOY_STAGE}"
             echo "- Tag: ${DEPLOY_TAG}"
+            echo "- Tag changed: ${DEPLOY_TAG_CHANGED}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Skip deploy on push-only
-        if: ${{ env.DEPLOY_OPERATION != 'deploy' }}
+      - name: Skip deploy when tag is unchanged
+        if: ${{ env.DEPLOY_TAG_CHANGED != 'true' }}
         run: |
-          echo "- Skipped: push-only" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Skipped: manifest tag did not change" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Resolve FES image URI
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           echo "IMAGE_URI=${ECR_REGISTRY}/${FES_REPOSITORY}:${DEPLOY_TAG}" >> ${GITHUB_ENV}
 
       - name: Validate FES image exists
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           aws ecr describe-images \
             --repository-name "${FES_REPOSITORY}" \
             --image-ids imageTag="${DEPLOY_TAG}" >/dev/null
 
       - name: Resolve ECS names
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           if [ "${DEPLOY_STAGE}" = "prod" ]; then
             PREFIX="qca"
@@ -108,7 +110,7 @@ jobs:
           echo "FES_TASK_FAMILY=${PREFIX}-fes" >> ${GITHUB_ENV}
 
       - name: Deploy FES ECS service
-        if: ${{ env.DEPLOY_OPERATION == 'deploy' }}
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
         run: |
           bash scripts/deploy/deploy_ecs.sh \
             "${ECS_CLUSTER}" \
