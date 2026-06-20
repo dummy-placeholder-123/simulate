@@ -1,5 +1,5 @@
 # Deployment-only manifest.
 # Changing tag deploys an already-built frontend release to the shared UI host with this default environment.
 environment: dev
-release-name: dev-fes-ui-44f2526
-tag: 44f25267ac71c753db28ceeea317c41ff695c949
+release-name: dev-fes-ui-71d89e9
+tag: 71d89e97d0dc13620472792368eee9039fe0e1a5
