@@ -23,6 +23,13 @@ import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
 import software.amazon.awscdk.services.cloudfront.Distribution;
 import software.amazon.awscdk.services.cloudfront.DistributionProps;
 import software.amazon.awscdk.services.cloudfront.ViewerProtocolPolicy;
+import software.amazon.awscdk.services.cognito.AuthFlow;
+import software.amazon.awscdk.services.cognito.PasswordPolicy;
+import software.amazon.awscdk.services.cognito.SignInAliases;
+import software.amazon.awscdk.services.cognito.UserPool;
+import software.amazon.awscdk.services.cognito.UserPoolClient;
+import software.amazon.awscdk.services.cognito.UserPoolClientProps;
+import software.amazon.awscdk.services.cognito.UserPoolProps;
 import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
@@ -118,6 +125,9 @@ public class InfraStack extends Stack {
         String scanUploadBucketName = resourcePrefix + "-scan-uploads-" + StageConfig.AWS_ACCOUNT_ID + "-" + StageConfig.AWS_REGION;
         String scanTableName = resourcePrefix + "-scans";
         String fesConfigPathPrefix = "/qca/" + stage + "/fes";
+        String fesAuthProvider = contextString("fesAuthProvider", "cognito");
+        String fesCognitoIssuerUri = contextString("fesCognitoIssuerUri", "");
+        String fesCognitoClientId = contextString("fesCognitoClientId", "");
         boolean isProd = "prod".equals(stage);
         boolean isDev = "dev".equals(stage);
         int engineDesiredCount = isProd ? 1 : 0;
@@ -360,6 +370,61 @@ public class InfraStack extends Stack {
                 .stateMachineType(StateMachineType.STANDARD)
                 .build();
 
+        UserPool fesUserPool = new UserPool(this, "FesUserPool",
+                UserPoolProps.builder()
+                        .userPoolName(resourcePrefix + "-fes-users")
+                        .selfSignUpEnabled(false)
+                        .signInAliases(SignInAliases.builder()
+                                .username(true)
+                                .build())
+                        .signInCaseSensitive(false)
+                        .passwordPolicy(PasswordPolicy.builder()
+                                .minLength(8)
+                                .requireDigits(false)
+                                .requireLowercase(false)
+                                .requireSymbols(false)
+                                .requireUppercase(false)
+                                .build())
+                        .removalPolicy(RemovalPolicy.DESTROY)
+                        .build());
+
+        UserPoolClient fesUserPoolClient = new UserPoolClient(this, "FesUserPoolClient",
+                UserPoolClientProps.builder()
+                        .userPool(fesUserPool)
+                        .userPoolClientName(resourcePrefix + "-fes-ui")
+                        .generateSecret(false)
+                        .authFlows(AuthFlow.builder()
+                                .userPassword(true)
+                                .userSrp(true)
+                                .build())
+                        .accessTokenValidity(Duration.minutes(15))
+                        .idTokenValidity(Duration.minutes(15))
+                        .refreshTokenValidity(Duration.hours(6))
+                        .build());
+
+        String createdFesCognitoIssuerUri = "https://cognito-idp."
+                + StageConfig.AWS_REGION
+                + ".amazonaws.com/"
+                + fesUserPool.getUserPoolId();
+        String effectiveFesCognitoIssuerUri = fesCognitoIssuerUri.isBlank()
+                ? createdFesCognitoIssuerUri
+                : fesCognitoIssuerUri;
+        String effectiveFesCognitoClientId = fesCognitoClientId.isBlank()
+                ? fesUserPoolClient.getUserPoolClientId()
+                : fesCognitoClientId;
+
+        CfnOutput.Builder.create(this, "FesCognitoUserPoolId")
+                .value(fesUserPool.getUserPoolId())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesCognitoClientId")
+                .value(fesUserPoolClient.getUserPoolClientId())
+                .build();
+
+        CfnOutput.Builder.create(this, "FesCognitoIssuerUri")
+                .value(createdFesCognitoIssuerUri)
+                .build();
+
         Secret fesDemoPasswordSecret = Secret.Builder.create(this, "FesDemoPasswordSecret")
                 .secretName(fesConfigPathPrefix + "/demo-user-password")
                 .description("Password for the demo FES operator account")
@@ -591,6 +656,9 @@ public class InfraStack extends Stack {
                         Map.entry("QCA_S3_SCAN_UPLOAD_BUCKET_NAME", scanUploadBucketName),
                         Map.entry("QCA_STEP_FUNCTIONS_SCAN_STATE_MACHINE_ARN", scanStateMachine.getStateMachineArn()),
                         Map.entry("QCA_IDEMPOTENCY_TTL_HOURS", "24"),
+                        Map.entry("QCA_AUTH_PROVIDER", fesAuthProvider),
+                        Map.entry("QCA_COGNITO_ISSUER_URI", effectiveFesCognitoIssuerUri),
+                        Map.entry("QCA_COGNITO_CLIENT_ID", effectiveFesCognitoClientId),
                         Map.entry("QCA_FES_DEMO_USERNAME", "qca-admin"),
                         Map.entry("QCA_JWT_ACCESS_TTL_SECONDS", "900"),
                         Map.entry("QCA_JWT_REFRESH_TTL_SECONDS", "604800"),
@@ -923,5 +991,14 @@ public class InfraStack extends Stack {
         CfnOutput.Builder.create(this, "FesRunningTaskCountAboveTwoAlarmName")
                 .value(fesRunningTaskCountAboveTwoAlarm.getAlarmName())
                 .build();
+    }
+
+    private String contextString(String key, String defaultValue) {
+        Object value = getNode().tryGetContext(key);
+        if (value == null) {
+            return defaultValue;
+        }
+        String stringValue = value.toString();
+        return stringValue.isBlank() ? defaultValue : stringValue;
     }
 }

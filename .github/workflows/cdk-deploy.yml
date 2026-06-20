@@ -21,6 +21,9 @@ env:
   AWS_REGION: us-east-1
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
   DEPLOY_STAGE: ${{ inputs.stage }}
+  FES_AUTH_PROVIDER: ${{ vars.FES_AUTH_PROVIDER || 'cognito' }}
+  FES_COGNITO_ISSUER_URI: ${{ vars.FES_COGNITO_ISSUER_URI || '' }}
+  FES_COGNITO_CLIENT_ID: ${{ vars.FES_COGNITO_CLIENT_ID || '' }}
 
 jobs:
   deploy-infra:
@@ -60,4 +63,10 @@ jobs:
       - name: Test
         run: mvn -B test
       - name: Deploy
-        run: cdk deploy -c stage=${DEPLOY_STAGE} --require-approval never
+        run: |
+          cdk deploy \
+            -c stage="${DEPLOY_STAGE}" \
+            -c fesAuthProvider="${FES_AUTH_PROVIDER}" \
+            -c fesCognitoIssuerUri="${FES_COGNITO_ISSUER_URI}" \
+            -c fesCognitoClientId="${FES_COGNITO_CLIENT_ID}" \
+            --require-approval never

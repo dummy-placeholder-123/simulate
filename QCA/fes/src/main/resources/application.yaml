@@ -18,11 +18,15 @@ qca:
   idempotency:
     ttl-hours: ${QCA_IDEMPOTENCY_TTL_HOURS:24}
   security:
+    auth-provider: ${QCA_AUTH_PROVIDER:cognito}
     demo-username: ${QCA_FES_DEMO_USERNAME:qca-admin}
     demo-password: ${QCA_FES_DEMO_PASSWORD:local-dev-password}
     jwt-signing-key: ${QCA_JWT_SIGNING_KEY:local-dev-jwt-signing-key-local-dev-jwt-signing-key}
     access-token-ttl-seconds: ${QCA_JWT_ACCESS_TTL_SECONDS:900}
     refresh-token-ttl-seconds: ${QCA_JWT_REFRESH_TTL_SECONDS:604800}
+    cognito:
+      issuer-uri: ${QCA_COGNITO_ISSUER_URI:}
+      client-id: ${QCA_COGNITO_CLIENT_ID:}
   appconfig:
     application-id: ${QCA_APPCONFIG_APPLICATION_ID:}
     environment-id: ${QCA_APPCONFIG_ENVIRONMENT_ID:}

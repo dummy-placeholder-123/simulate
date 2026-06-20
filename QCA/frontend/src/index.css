@@ -37,6 +37,64 @@ button {
   padding: 28px;
 }
 
+.login-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-panel {
+  display: grid;
+  gap: 22px;
+  width: min(420px, 100%);
+  padding: 26px;
+  border: 1px solid #cfd8dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-form label {
+  display: grid;
+  gap: 7px;
+  color: #52616b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.text-input {
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid #cfd8dd;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #17202a;
+}
+
+.text-input:focus {
+  outline: 2px solid rgba(20, 108, 95, 0.18);
+  border-color: #146c5f;
+}
+
+.login-error {
+  padding: 10px 12px;
+  border: 1px solid #e0a6a6;
+  border-radius: 8px;
+  background: #fff3f3;
+  color: #9d2b2b;
+  font-size: 13px;
+}
+
+.login-submit {
+  width: 100%;
+}
+
 .upload-panel,
 .json-panel {
   border: 1px solid #cfd8dd;
@@ -53,6 +111,7 @@ button {
 .brand-row {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 16px;
 }
 
@@ -116,6 +175,36 @@ p {
   padding: 0 18px;
   background: #146c5f;
   color: #ffffff;
+}
+
+.logout-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #cfd8dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #26333d;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background: #f0f4f6;
+}
+
+.logout-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.session-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .submit-button:hover {
@@ -244,6 +333,12 @@ pre {
 @media (max-width: 700px) {
   .app-shell {
     padding: 16px;
+  }
+
+  .brand-row,
+  .session-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .upload-form {

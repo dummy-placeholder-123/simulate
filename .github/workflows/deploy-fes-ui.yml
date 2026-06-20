@@ -16,6 +16,11 @@ env:
   AWS_REGION: us-east-1
   AWS_CDK_ROLE_ARN: arn:aws:iam::564061926474:role/prod-devashish-cicd-github
   SHARED_INFRA_STACK: InfraStack-dev
+  FES_UI_AUTH_PROVIDER: ${{ vars.FES_UI_AUTH_PROVIDER || 'cognito' }}
+  FES_UI_SESSION_TTL_SECONDS: ${{ vars.FES_UI_SESSION_TTL_SECONDS || '21600' }}
+  FES_UI_COGNITO_REGION: ${{ vars.FES_UI_COGNITO_REGION || '' }}
+  FES_UI_COGNITO_USER_POOL_ID: ${{ vars.FES_UI_COGNITO_USER_POOL_ID || '' }}
+  FES_UI_COGNITO_CLIENT_ID: ${{ vars.FES_UI_COGNITO_CLIENT_ID || '' }}
 
 jobs:
   deploy:
@@ -122,6 +127,47 @@ jobs:
           echo "DEV_API_BASE_URL=$(resolve_api_url InfraStack-dev)" >> "${GITHUB_ENV}"
           echo "QA_API_BASE_URL=$(resolve_api_url InfraStack-qa)" >> "${GITHUB_ENV}"
           echo "PROD_API_BASE_URL=$(resolve_api_url InfraStack)" >> "${GITHUB_ENV}"
+
+      - name: Resolve UI Cognito config
+        if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
+        run: |
+          if [ "${FES_UI_AUTH_PROVIDER}" != "cognito" ]; then
+            exit 0
+          fi
+
+          case "${DEPLOY_STAGE}" in
+            dev) AUTH_STACK="InfraStack-dev" ;;
+            qa) AUTH_STACK="InfraStack-qa" ;;
+            prod) AUTH_STACK="InfraStack" ;;
+            *)
+              echo "Unsupported deploy stage ${DEPLOY_STAGE}" >&2
+              exit 1
+              ;;
+          esac
+
+          resolve_stack_output() {
+            local output_key="$1"
+            local value
+            value=$(aws cloudformation describe-stacks \
+              --stack-name "${AUTH_STACK}" \
+              --query "Stacks[0].Outputs[?OutputKey=='${output_key}'].OutputValue" \
+              --output text)
+            if [ -z "${value}" ] || [ "${value}" = "None" ]; then
+              echo "${output_key} output not found in ${AUTH_STACK}" >&2
+              exit 1
+            fi
+            echo "${value}"
+          }
+
+          if [ -z "${FES_UI_COGNITO_REGION}" ]; then
+            echo "FES_UI_COGNITO_REGION=${AWS_REGION}" >> "${GITHUB_ENV}"
+          fi
+          if [ -z "${FES_UI_COGNITO_USER_POOL_ID}" ]; then
+            echo "FES_UI_COGNITO_USER_POOL_ID=$(resolve_stack_output FesCognitoUserPoolId)" >> "${GITHUB_ENV}"
+          fi
+          if [ -z "${FES_UI_COGNITO_CLIENT_ID}" ]; then
+            echo "FES_UI_COGNITO_CLIENT_ID=$(resolve_stack_output FesCognitoClientId)" >> "${GITHUB_ENV}"
+          fi
 
       - name: Deploy shared UI hosting
         if: ${{ env.DEPLOY_TAG_CHANGED == 'true' }}
