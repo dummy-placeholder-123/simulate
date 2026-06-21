@@ -1,5 +1,0 @@
-# Deployment-only manifest.
-# Changing tag deploys an already-built release to this environment.
-environment: qa
-release-name: qa-pending
-tag: replace-with-agreed-deploy-tag

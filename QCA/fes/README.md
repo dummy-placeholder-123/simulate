@@ -10,8 +10,6 @@ FES serves the UI locally at:
 GET /
 ```
 
-The same React app is also deployable as a shared static site on S3 + CloudFront.
-
 The UI includes:
 
 - login and refresh token actions
@@ -43,24 +41,6 @@ Build targets:
 npm run build         -> QCA/frontend/dist
 npm run build:spring  -> QCA/fes/src/main/resources/static
 ```
-
-Release/deploy config:
-
-```text
-releases/fes-ui.yml
-deploy-env/dev/fes-ui.yml
-deploy-env/qa/fes-ui.yml
-deploy-env/prod/fes-ui.yml
-```
-
-GitHub Actions:
-
-```text
-.github/workflows/release-fes-ui.yml
-.github/workflows/deploy-fes-ui.yml
-```
-
-The hosted UI does not publish a Docker image. It publishes versioned static build artifacts and deploys them to a shared S3 + CloudFront site.
 
 ## Authentication
 

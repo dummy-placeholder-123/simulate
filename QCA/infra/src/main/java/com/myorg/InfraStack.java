@@ -61,7 +61,6 @@ import software.amazon.awscdk.services.ecs.DeploymentStrategy;
 import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.ecs.FargateTaskDefinition;
 import software.amazon.awscdk.services.ecs.LogDriver;
-import software.amazon.awscdk.services.ecs.LoadBalancerTargetOptions;
 import software.amazon.awscdk.services.ecs.MemoryUtilizationScalingProps;
 import software.amazon.awscdk.services.ecs.OperatingSystemFamily;
 import software.amazon.awscdk.services.ecs.PortMapping;
@@ -140,8 +139,8 @@ public class InfraStack extends Stack {
         int engineMinCapacity = isProd ? 1 : 0;
         int llmEngineDesiredCount = isProd ? 1 : 0;
         int llmEngineMinCapacity = isProd ? 1 : 0;
-        int fesDesiredCount = isProd ? 2 : 0;
-        int fesMinCapacity = isProd ? 2 : 0;
+        int fesDesiredCount = isProd ? 2 : isDev ? 1 : 0;
+        int fesMinCapacity = isProd ? 2 : isDev ? 1 : 0;
         Distribution fesUiDistribution = null;
 
         Table scanTable = Table.Builder.create(this, "ScanTable")
@@ -537,11 +536,14 @@ public class InfraStack extends Stack {
         fesJwtSigningSecret.grantRead(fesExecutionRole);
         fesPresignedUrlDurationParameter.grantRead(fesExecutionRole);
 
-        Role fesBlueGreenInfrastructureRole = Role.Builder.create(this, "FesBlueGreenInfrastructureRole")
-                .assumedBy(new ServicePrincipal("ecs.amazonaws.com"))
-                .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
-                        "AmazonECSInfrastructureRolePolicyForLoadBalancers")))
-                .build();
+        Role fesBlueGreenInfrastructureRole = null;
+        if (isProd) {
+            fesBlueGreenInfrastructureRole = Role.Builder.create(this, "FesBlueGreenInfrastructureRole")
+                    .assumedBy(new ServicePrincipal("ecs.amazonaws.com"))
+                    .managedPolicies(List.of(ManagedPolicy.fromAwsManagedPolicyName(
+                            "AmazonECSInfrastructureRolePolicyForLoadBalancers")))
+                    .build();
+        }
 
         Role llmEngineExecutionRole = Role.Builder.create(this, "LlmEngineTaskExecutionRole")
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
@@ -594,7 +596,7 @@ public class InfraStack extends Stack {
                 .build());
 
         engineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
-                .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
+                .image(ContainerImage.fromAsset("../engine"))
                 .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
                         .logGroup(engineLogGroup)
                         .streamPrefix("engine")
@@ -621,7 +623,7 @@ public class InfraStack extends Stack {
                 .build());
 
         llmEngineTaskDefinition.addContainer("EngineContainer", ContainerDefinitionOptions.builder()
-                .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
+                .image(ContainerImage.fromAsset("../llm-engine"))
                 .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
                         .logGroup(llmEngineLogGroup)
                         .streamPrefix("llm-engine")
@@ -648,7 +650,7 @@ public class InfraStack extends Stack {
                 .build());
 
         fesTaskDefinition.addContainer("FesContainer", ContainerDefinitionOptions.builder()
-                .image(ContainerImage.fromRegistry("public.ecr.aws/amazonlinux/amazonlinux:latest"))
+                .image(ContainerImage.fromAsset("../fes"))
                 .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
                         .logGroup(fesLogGroup)
                         .streamPrefix("fes")
@@ -715,7 +717,9 @@ public class InfraStack extends Stack {
                 .description("Security group for the public FES load balancer")
                 .build();
         fesAlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(80), "Allow HTTP");
-        fesAlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(9000), "Allow FES green test traffic");
+        if (isProd) {
+            fesAlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(9000), "Allow FES green test traffic");
+        }
 
         SecurityGroup fesServiceSecurityGroup = SecurityGroup.Builder.create(this, "FesServiceSecurityGroup")
                 .vpc(vpc)
@@ -724,20 +728,25 @@ public class InfraStack extends Stack {
                 .build();
         fesServiceSecurityGroup.addIngressRule(fesAlbSecurityGroup, Port.tcp(8080), "Allow ALB to reach FES");
 
-        FargateService fesService = FargateService.Builder.create(this, "FesService")
+        FargateService.Builder fesServiceBuilder = FargateService.Builder.create(this, "FesService")
                 .serviceName(resourcePrefix + "-fes-service")
                 .cluster(cluster)
                 .taskDefinition(fesTaskDefinition)
-                .deploymentStrategy(DeploymentStrategy.BLUE_GREEN)
-                .bakeTime(Duration.minutes(5))
                 .desiredCount(fesDesiredCount)
                 .assignPublicIp(true)
                 .securityGroups(List.of(fesServiceSecurityGroup))
-                .minHealthyPercent(100)
+                .minHealthyPercent(isProd ? 100 : 0)
                 .vpcSubnets(SubnetSelection.builder()
                         .subnetType(SubnetType.PUBLIC)
-                        .build())
-                .build();
+                        .build());
+
+        if (isProd) {
+            fesServiceBuilder
+                    .deploymentStrategy(DeploymentStrategy.BLUE_GREEN)
+                    .bakeTime(Duration.minutes(5));
+        }
+
+        FargateService fesService = fesServiceBuilder.build();
 
         ApplicationLoadBalancer fesLoadBalancer = ApplicationLoadBalancer.Builder.create(this, "FesLoadBalancer")
                 .loadBalancerName(resourcePrefix + "-fes-alb")
@@ -771,74 +780,93 @@ public class InfraStack extends Stack {
                         .open(false)
                         .build());
 
-        ApplicationListener fesTestListener = fesLoadBalancer.addListener("FesTestListener",
-                BaseApplicationListenerProps.builder()
-                        .port(9000)
-                        .defaultAction(ListenerAction.fixedResponse(404))
-                        .protocol(ApplicationProtocol.HTTP)
-                        .open(false)
-                        .build());
+        ApplicationTargetGroup fesTargetGroup;
+        if (isProd) {
+            ApplicationListener fesTestListener = fesLoadBalancer.addListener("FesTestListener",
+                    BaseApplicationListenerProps.builder()
+                            .port(9000)
+                            .defaultAction(ListenerAction.fixedResponse(404))
+                            .protocol(ApplicationProtocol.HTTP)
+                            .open(false)
+                            .build());
 
-        ApplicationTargetGroup fesBlueTargetGroup = new ApplicationTargetGroup(this, "FesBlueTargetGroup",
-                ApplicationTargetGroupProps.builder()
-                        .vpc(vpc)
-                        .port(8080)
-                        .protocol(ApplicationProtocol.HTTP)
-                        .targetType(TargetType.IP)
-                        .healthCheck(HealthCheck.builder()
-                                .path("/actuator/health")
-                                .healthyHttpCodes("200")
-                                .build())
-                        .build());
+            ApplicationTargetGroup fesBlueTargetGroup = new ApplicationTargetGroup(this, "FesBlueTargetGroup",
+                    ApplicationTargetGroupProps.builder()
+                            .vpc(vpc)
+                            .port(8080)
+                            .protocol(ApplicationProtocol.HTTP)
+                            .targetType(TargetType.IP)
+                            .healthCheck(HealthCheck.builder()
+                                    .path("/actuator/health")
+                                    .healthyHttpCodes("200")
+                                    .build())
+                            .build());
 
-        ApplicationTargetGroup fesGreenTargetGroup = new ApplicationTargetGroup(this, "FesGreenTargetGroup",
-                ApplicationTargetGroupProps.builder()
-                        .vpc(vpc)
-                        .port(8080)
-                        .protocol(ApplicationProtocol.HTTP)
-                        .targetType(TargetType.IP)
-                        .healthCheck(HealthCheck.builder()
-                                .path("/actuator/health")
-                                .healthyHttpCodes("200")
-                                .build())
-                        .build());
+            ApplicationTargetGroup fesGreenTargetGroup = new ApplicationTargetGroup(this, "FesGreenTargetGroup",
+                    ApplicationTargetGroupProps.builder()
+                            .vpc(vpc)
+                            .port(8080)
+                            .protocol(ApplicationProtocol.HTTP)
+                            .targetType(TargetType.IP)
+                            .healthCheck(HealthCheck.builder()
+                                    .path("/actuator/health")
+                                    .healthyHttpCodes("200")
+                                    .build())
+                            .build());
 
-        ApplicationListenerRule fesProductionRule = new ApplicationListenerRule(this, "FesProductionRule",
-                ApplicationListenerRuleProps.builder()
-                        .listener(fesHttpListener)
-                        .priority(100)
-                        .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
-                        .action(ListenerAction.forward(List.of(fesBlueTargetGroup)))
-                        .build());
+            ApplicationListenerRule fesProductionRule = new ApplicationListenerRule(this, "FesProductionRule",
+                    ApplicationListenerRuleProps.builder()
+                            .listener(fesHttpListener)
+                            .priority(100)
+                            .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
+                            .action(ListenerAction.forward(List.of(fesBlueTargetGroup)))
+                            .build());
 
-        ApplicationListenerRule fesTestRule = new ApplicationListenerRule(this, "FesTestRule",
-                ApplicationListenerRuleProps.builder()
-                        .listener(fesTestListener)
-                        .priority(100)
-                        .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
-                        .action(ListenerAction.forward(List.of(fesGreenTargetGroup)))
-                        .build());
+            ApplicationListenerRule fesTestRule = new ApplicationListenerRule(this, "FesTestRule",
+                    ApplicationListenerRuleProps.builder()
+                            .listener(fesTestListener)
+                            .priority(100)
+                            .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
+                            .action(ListenerAction.forward(List.of(fesGreenTargetGroup)))
+                            .build());
 
-        CfnService fesServiceResource = (CfnService) fesService.getNode().getDefaultChild();
-        fesServiceResource.setLoadBalancers(List.of(CfnService.LoadBalancerProperty.builder()
-                .containerName("FesContainer")
-                .containerPort(8080)
-                .targetGroupArn(fesBlueTargetGroup.getTargetGroupArn())
-                .advancedConfiguration(CfnService.AdvancedConfigurationProperty.builder()
-                        .alternateTargetGroupArn(fesGreenTargetGroup.getTargetGroupArn())
-                        .productionListenerRule(fesProductionRule.getListenerRuleArn())
-                        .testListenerRule(fesTestRule.getListenerRuleArn())
-                        .roleArn(fesBlueGreenInfrastructureRole.getRoleArn())
-                        .build())
-                .build()));
+            CfnService fesServiceResource = (CfnService) fesService.getNode().getDefaultChild();
+            fesServiceResource.setLoadBalancers(List.of(CfnService.LoadBalancerProperty.builder()
+                    .containerName("FesContainer")
+                    .containerPort(8080)
+                    .targetGroupArn(fesBlueTargetGroup.getTargetGroupArn())
+                    .advancedConfiguration(CfnService.AdvancedConfigurationProperty.builder()
+                            .alternateTargetGroupArn(fesGreenTargetGroup.getTargetGroupArn())
+                            .productionListenerRule(fesProductionRule.getListenerRuleArn())
+                            .testListenerRule(fesTestRule.getListenerRuleArn())
+                            .roleArn(fesBlueGreenInfrastructureRole.getRoleArn())
+                            .build())
+                    .build()));
+            fesTargetGroup = fesBlueTargetGroup;
+        } else {
+            fesTargetGroup = fesHttpListener.addTargets("FesTargets",
+                    AddApplicationTargetsProps.builder()
+                            .port(8080)
+                            .protocol(ApplicationProtocol.HTTP)
+                            .priority(100)
+                            .conditions(List.of(ListenerCondition.pathPatterns(List.of("/*"))))
+                            .targets(List.of(fesService))
+                            .healthCheck(HealthCheck.builder()
+                                    .path("/actuator/health")
+                                    .healthyHttpCodes("200")
+                                    .build())
+                            .build());
+        }
 
         CfnOutput.Builder.create(this, "FesAlbDnsName")
                 .value(fesLoadBalancer.getLoadBalancerDnsName())
                 .build();
 
-        CfnOutput.Builder.create(this, "FesAlbGreenTestUrl")
-                .value("http://" + fesLoadBalancer.getLoadBalancerDnsName() + ":9000")
-                .build();
+        if (isProd) {
+            CfnOutput.Builder.create(this, "FesAlbGreenTestUrl")
+                    .value("http://" + fesLoadBalancer.getLoadBalancerDnsName() + ":9000")
+                    .build();
+        }
 
         CfnOutput.Builder.create(this, "FesDemoUsername")
                 .value("qca-admin")
@@ -973,7 +1001,7 @@ public class InfraStack extends Stack {
                         .metricName("TargetResponseTime")
                         .dimensionsMap(Map.of(
                                 "LoadBalancer", fesLoadBalancer.getLoadBalancerFullName(),
-                                "TargetGroup", fesBlueTargetGroup.getTargetGroupFullName()))
+                                "TargetGroup", fesTargetGroup.getTargetGroupFullName()))
                         .statistic("Average")
                         .period(Duration.minutes(1))
                         .build())
