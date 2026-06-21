@@ -28,6 +28,10 @@ if [ "${AUTH_PROVIDER}" = "cognito" ]; then
   fi
 fi
 
+if [ "${DEFAULT_ENV}" = "dev" ]; then
+  DEV_API_BASE_URL=""
+fi
+
 aws s3 ls "s3://${RELEASE_BUCKET}/${ARTIFACT_PREFIX}/${DEPLOY_TAG}/" >/dev/null
 
 aws s3 sync \

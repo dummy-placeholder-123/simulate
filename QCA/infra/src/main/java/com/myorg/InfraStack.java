@@ -20,8 +20,13 @@ import software.amazon.awscdk.services.cloudwatch.AlarmProps;
 import software.amazon.awscdk.services.cloudwatch.ComparisonOperator;
 import software.amazon.awscdk.services.cloudwatch.Metric;
 import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
+import software.amazon.awscdk.services.cloudfront.AddBehaviorOptions;
+import software.amazon.awscdk.services.cloudfront.AllowedMethods;
+import software.amazon.awscdk.services.cloudfront.CachePolicy;
 import software.amazon.awscdk.services.cloudfront.Distribution;
 import software.amazon.awscdk.services.cloudfront.DistributionProps;
+import software.amazon.awscdk.services.cloudfront.OriginProtocolPolicy;
+import software.amazon.awscdk.services.cloudfront.OriginRequestPolicy;
 import software.amazon.awscdk.services.cloudfront.ViewerProtocolPolicy;
 import software.amazon.awscdk.services.cognito.AuthFlow;
 import software.amazon.awscdk.services.cognito.PasswordPolicy;
@@ -89,6 +94,7 @@ import software.amazon.awscdk.services.s3.Bucket;
 import software.amazon.awscdk.services.s3.BucketEncryption;
 import software.amazon.awscdk.services.s3.CorsRule;
 import software.amazon.awscdk.services.s3.HttpMethods;
+import software.amazon.awscdk.services.cloudfront.origins.LoadBalancerV2Origin;
 import software.amazon.awscdk.services.cloudfront.origins.S3BucketOrigin;
 import software.amazon.awscdk.services.secretsmanager.Secret;
 import software.amazon.awscdk.services.secretsmanager.SecretStringGenerator;
@@ -136,6 +142,7 @@ public class InfraStack extends Stack {
         int llmEngineMinCapacity = isProd ? 1 : 0;
         int fesDesiredCount = isProd ? 2 : 0;
         int fesMinCapacity = isProd ? 2 : 0;
+        Distribution fesUiDistribution = null;
 
         Table scanTable = Table.Builder.create(this, "ScanTable")
                 .tableName(scanTableName)
@@ -210,7 +217,7 @@ public class InfraStack extends Stack {
                     .autoDeleteObjects(true)
                     .build();
 
-            Distribution fesUiDistribution = new Distribution(this, "FesUiDistribution",
+            fesUiDistribution = new Distribution(this, "FesUiDistribution",
                     DistributionProps.builder()
                             .defaultRootObject("index.html")
                             .defaultBehavior(software.amazon.awscdk.services.cloudfront.BehaviorOptions.builder()
@@ -741,6 +748,20 @@ public class InfraStack extends Stack {
                         .subnetType(SubnetType.PUBLIC)
                         .build())
                 .build();
+
+        if (isDev && fesUiDistribution != null) {
+            fesUiDistribution.addBehavior("/api/*",
+                    LoadBalancerV2Origin.Builder.create(fesLoadBalancer)
+                            .protocolPolicy(OriginProtocolPolicy.HTTP_ONLY)
+                            .httpPort(80)
+                            .build(),
+                    AddBehaviorOptions.builder()
+                            .allowedMethods(AllowedMethods.ALLOW_ALL)
+                            .cachePolicy(CachePolicy.CACHING_DISABLED)
+                            .originRequestPolicy(OriginRequestPolicy.ALL_VIEWER)
+                            .viewerProtocolPolicy(ViewerProtocolPolicy.REDIRECT_TO_HTTPS)
+                            .build());
+        }
 
         ApplicationListener fesHttpListener = fesLoadBalancer.addListener("FesHttpListener",
                 BaseApplicationListenerProps.builder()
