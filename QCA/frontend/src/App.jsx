@@ -102,6 +102,10 @@ function accessExpiry(expiresInSeconds, sessionExpiresAt) {
   return Math.min(Date.now() + Number(expiresInSeconds || 900) * 1000, sessionExpiresAt);
 }
 
+function hasCognitoAuthConfig(authConfig) {
+  return Boolean(authConfig.cognito.region && authConfig.cognito.clientId);
+}
+
 export default function App() {
   const [baseUrl, setBaseUrl] = useState(window.location.origin);
   const [authConfig, setAuthConfig] = useState(defaultAuthConfig);
@@ -190,6 +194,20 @@ export default function App() {
       minute: "2-digit",
     })}`;
   }, [session]);
+
+  const loginDisabled = loginRunning
+    || !runtimeConfigLoaded
+    || (authConfig.provider === "cognito" && !hasCognitoAuthConfig(authConfig));
+
+  const loginStatusMessage = useMemo(() => {
+    if (!runtimeConfigLoaded) {
+      return "Loading auth config...";
+    }
+    if (authConfig.provider === "cognito" && !hasCognitoAuthConfig(authConfig)) {
+      return "Cognito config is missing from runtime-config.json.";
+    }
+    return "";
+  }, [authConfig, runtimeConfigLoaded]);
 
   async function copyJson() {
     try {
@@ -348,6 +366,14 @@ export default function App() {
 
   async function handleLogin(event) {
     event.preventDefault();
+    if (!runtimeConfigLoaded) {
+      setLoginError("Auth config is still loading. Try again in a moment.");
+      return;
+    }
+    if (authConfig.provider === "cognito" && !hasCognitoAuthConfig(authConfig)) {
+      setLoginError("Cognito config is missing from runtime-config.json.");
+      return;
+    }
     setLoginRunning(true);
     setLoginError("");
 
@@ -518,8 +544,10 @@ export default function App() {
                 onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
               />
             </label>
-            {loginError ? <div className="login-error">{loginError}</div> : null}
-            <button className="submit-button login-submit" type="submit" disabled={loginRunning}>
+            {loginError || loginStatusMessage ? (
+              <div className="login-error">{loginError || loginStatusMessage}</div>
+            ) : null}
+            <button className="submit-button login-submit" type="submit" disabled={loginDisabled}>
               {loginRunning ? (
                 <>
                   <span className="button-spinner" aria-hidden="true" />
