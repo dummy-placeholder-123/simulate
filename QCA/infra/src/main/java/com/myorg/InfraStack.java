@@ -642,8 +642,8 @@ public class InfraStack extends Stack {
         scanStateMachine.grantStartExecution(fesTaskDefinition.getTaskRole());
         fesTaskDefinition.getTaskRole().addToPrincipalPolicy(PolicyStatement.Builder.create()
                 .actions(List.of(
-                        "appconfigdata:StartConfigurationSession",
-                        "appconfigdata:GetLatestConfiguration"))
+                        "appconfig:StartConfigurationSession",
+                        "appconfig:GetLatestConfiguration"))
                 .resources(List.of("*"))
                 .build());
 

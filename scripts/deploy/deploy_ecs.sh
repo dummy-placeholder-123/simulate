@@ -74,6 +74,45 @@ aws ecs update-service \
   --service "${SERVICE}" \
   --task-definition "${NEW_TASK_DEF_ARN}" >/dev/null
 
-aws ecs wait services-stable \
-  --cluster "${CLUSTER}" \
-  --services "${SERVICE}"
+WAIT_TIMEOUT_SECONDS="${ECS_WAIT_TIMEOUT_SECONDS:-1800}"
+WAIT_POLL_SECONDS="${ECS_WAIT_POLL_SECONDS:-30}"
+WAIT_DEADLINE=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+
+while true; do
+  SERVICE_STATE=$(aws ecs describe-services \
+    --cluster "${CLUSTER}" \
+    --services "${SERVICE}" \
+    --query 'services[0].[desiredCount,runningCount,pendingCount,length(deployments),deployments[0].rolloutState]' \
+    --output text)
+
+  read -r DESIRED_COUNT RUNNING_COUNT PENDING_COUNT DEPLOYMENT_COUNT ROLLOUT_STATE <<< "${SERVICE_STATE}"
+  echo "ECS service state: desired=${DESIRED_COUNT} running=${RUNNING_COUNT} pending=${PENDING_COUNT} deployments=${DEPLOYMENT_COUNT} rollout=${ROLLOUT_STATE}"
+
+  if [ "${DEPLOYMENT_COUNT}" = "1" ] \
+    && [ "${RUNNING_COUNT}" = "${DESIRED_COUNT}" ] \
+    && [ "${PENDING_COUNT}" = "0" ] \
+    && { [ "${ROLLOUT_STATE}" = "COMPLETED" ] || [ "${ROLLOUT_STATE}" = "None" ]; }; then
+    break
+  fi
+
+  if [ "${ROLLOUT_STATE}" = "FAILED" ]; then
+    aws ecs describe-services \
+      --cluster "${CLUSTER}" \
+      --services "${SERVICE}" \
+      --query 'services[0].events[0:10].[createdAt,message]' \
+      --output table
+    exit 1
+  fi
+
+  if [ "${SECONDS}" -ge "${WAIT_DEADLINE}" ]; then
+    echo "Timed out waiting for ECS service ${SERVICE} to stabilize after ${WAIT_TIMEOUT_SECONDS}s" >&2
+    aws ecs describe-services \
+      --cluster "${CLUSTER}" \
+      --services "${SERVICE}" \
+      --query 'services[0].events[0:10].[createdAt,message]' \
+      --output table
+    exit 1
+  fi
+
+  sleep "${WAIT_POLL_SECONDS}"
+done
